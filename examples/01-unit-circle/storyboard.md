@@ -53,14 +53,24 @@ One idea per beat. Each beat answers a question raised by the one before. θ res
 
 ## Layout sketch
 
-- Diagram on the left: origin O at (-3.8, -0.8), radius 2.5 scene units; the circle spans x -6.3 to -1.3,
-  y -3.3 to 1.7. At 55°: E (x-axis crossing) at x ≈ 0.56, F (y-axis crossing) at y ≈ 2.25.
-- Side panel from x = 1.7 to 6.4: caption at the top (y ≈ 3.0), formulas or live readouts below.
-- Labels: cos below its leg; sin right of its leg near the bottom; tan and cot on the outer side
-  of the tangent line; sec at the right end of a dimension line 0.7 below the x-axis (cos and sec
-  would otherwise overlap on the axis); csc left of the y-axis.
-- Final sweep: diagram shrinks to radius 1.4 at (-4.6, -1.6) so the long segments fit; readouts
-  top-right, out of the line's path.
+(Revised in this run after the owner's geometry review; the earlier layout had the axes reaching
+~1.1 R on one side and 1.25-2.05 R on the other, and the circle 5% from the left edge.)
+
+- The axes are always symmetric about the circle's centre O: half-lengths XR and YU (in radii) are
+  the same on both sides. 1.25 R before the tangent line; then XR = sec 55° + 0.06 and
+  YU = csc 55° + 0.125, so they reach just past E and F, growing both ways.
+- HOME: O = (-2.45, 0), R = 2.0. The figure (axes + circle) is centred in the left region
+  x in [-7.11, 2.21] with >= 7.4% margin on every side. Side panel from x = 2.35 to 6.4: caption at
+  y = 3.0 (30 pt, scaled to fit), formulas or live readouts below.
+- WIDE (limit sweep): O = (0, -0.35), R = 0.95, XR = sec 80° + 0.13, YU = csc 20° + 0.26; the figure
+  is centred under the caption band (region x in [-7.11, 7.11], y in [-4, 3.3]) with >= 7.8% margin;
+  captions and the six readouts sit in the empty first quadrant (x >= 1.5, above the tangent line).
+- Labels (32 pt): cos below its leg; sin just right of its leg, low (clear of the arc at R = 2);
+  tan and cot on the outer side of the tangent line; sec at the right end of a dimension line 0.7
+  below the x-axis (cos and sec would otherwise overlap on the axis); csc left of the y-axis.
+- Declared GeometryGuard rules: concentric(circle, x_axis, y_axis); symmetric x_axis / y_axis about
+  the circle; within_margin 7% and centered_in(region) for the figure in HOME and in WIDE;
+  within_margin 7% for the whole drawing (axes, circle, segments, labels) in HOME and in WIDE.
 
 ## Open questions for the user (if any)
 

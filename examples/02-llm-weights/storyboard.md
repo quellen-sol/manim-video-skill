@@ -67,3 +67,13 @@ One idea per beat. Each beat answers a question raised by the one before.
 ## Open questions for the user (if any)
 
 - None asked (unattended run); narration defaulted to silent.
+
+## Changes in this run (container-route test, on top of the example's storyboard)
+
+- Same beats, content and length (150.0 s). Titles and captions now fade out before the new text
+  fades in (no overlapping text mid-swap); digit and "?"->"mat" swaps likewise.
+- Layout zones made exact and measured by GeometryGuard: stack chapter = lane diagram centred in
+  x -7.11..1.8, panel x 1.8..7.11 (embedding table and prediction bars centred in it); hook row,
+  attention row, neuron figure (input and update vectors mirrored about the neuron at the centre),
+  MLP-matrix figure, scale charts and recap centred on the frame; every figure keeps 7 % margins.
+- Beat 12: W_up rows appear neuron by neuron after that neuron's edges flash (no edge-to-row morph).

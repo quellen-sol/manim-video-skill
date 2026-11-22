@@ -399,6 +399,31 @@ def geometry_check(log_text: str) -> dict:
             "message": f"all {len(rules)} rule(s) and the frame-edge rule hold over {s.get('animations', 0)} animations"}
 
 
+def probe_streams(path: Path) -> dict:
+    r = subprocess.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_streams", "-show_format",
+                        str(path)], capture_output=True, text=True)
+    try:
+        d = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return {}
+    v = next((x for x in d.get("streams", []) if x.get("codec_type") == "video"), {})
+    a = next((x for x in d.get("streams", []) if x.get("codec_type") == "audio"), {})
+    return {"video_codec": v.get("codec_name"), "video_s": float(v.get("duration") or d.get("format", {}).get("duration") or 0),
+            "audio_codec": a.get("codec_name"), "audio_s": float(a.get("duration") or 0) if a else None}
+
+
+def pad_audio(src: Path, dst: Path, log) -> bool:
+    """Extend a narration track that ends before the picture with silence, so the audio stream
+    lasts exactly as long as the video (manim-voiceover's track stops after the last clip)."""
+    info = probe_streams(src)
+    if not info.get("audio_codec") or info["audio_s"] is None or info["video_s"] - info["audio_s"] <= 0.05:
+        return False
+    rc = run_logged(["ffmpeg", "-y", "-hide_banner", "-nostats", "-i", str(src), "-map", "0:v:0", "-map", "0:a:0",
+                     "-c:v", "copy", "-af", f"apad=whole_dur={info['video_s']:.3f}", "-c:a", "aac", "-b:a", "192k",
+                     "-t", f"{info['video_s']:.3f}", str(dst)], log)
+    return rc == 0
+
+
 def host_paths(index: Path) -> None:
     """index.txt from frames.py names the video by its container path; make it JOB_DIR-relative."""
     if index.is_file():
@@ -761,6 +786,11 @@ def cmd_render(quality: str | None, animations: str | None = None) -> int:
             say(f"re-encode with {job['encode']} failed; see out/render.log")
             return finish("failed", 4)
         current = tmp
+    if narr["enabled"]:
+        padded = OUT / "tmp" / "padded.mp4"
+        if pad_audio(current, padded, log):
+            say("narration: padded the audio track with silence to the video's length")
+            current = padded
     shutil.copyfile(current, delivered)
     summary["video"] = str(delivered.relative_to(JOB))
     summary["media_video"] = str(media_video.relative_to(JOB))
@@ -782,6 +812,14 @@ def cmd_render(quality: str | None, animations: str | None = None) -> int:
         report = {"result": "FAIL", "checks": [{"level": "FAIL", "check": "qa_check",
                                                 "message": (r.stderr or r.stdout).strip()[-500:]}]}
     report["scene_warnings"] = scene_warnings[:200]
+    av = probe_streams(delivered)
+    report["streams"] = av
+    if narr["enabled"]:
+        ok = av.get("audio_codec") == "aac" and av.get("audio_s") is not None and abs(av["audio_s"] - av["video_s"]) <= 0.1
+        report.setdefault("checks", []).append({
+            "level": "PASS" if ok else "FAIL", "check": "av_length",
+            "message": (f"audio {av.get('audio_codec')} {av.get('audio_s') or 0:.2f} s, video {av.get('video_codec')} "
+                        f"{av.get('video_s', 0):.2f} s" + ("" if ok else " (need AAC lasting as long as the video, within 0.1 s)"))})
     geo = geometry_check(text)
     report["geometry"] = geo
     report.setdefault("checks", []).append({"level": geo["level"], "check": "geometry", "message": geo["message"]})

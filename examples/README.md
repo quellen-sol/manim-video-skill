@@ -8,9 +8,34 @@ feedback on the skill) and `stills/` (before/after pairs and the final contact s
 
 Videos are not in git. Each folder is also a job directory for the render container (it has a
 `job.json`): `skills/manim-video/scripts/render-in-container.sh examples/<folder> --quality final`
-writes `examples/<folder>/out/Explainer-final.mp4`. These five runs used the earlier render path
-(the official Manim image driven by `render.sh`); see "Container re-run" below for the same
-prompts run through the container route.
+writes `examples/<folder>/out/Explainer-final.mp4`.
+
+The folders now hold the **container re-run** (2026-11-22, below): `scene.py`, `job.json`,
+`storyboard.md`, `review.md` and `stills/container-final-sheet.png` come from it. `notes.md`, the
+other `stills/` and `prompt.md` are from the first run, which used the earlier render path (the
+official Manim image driven by `render.sh`); its scenes are in git history at `9641aa2`.
+
+## Container re-run (2026-11-22)
+
+Five fresh agents ran the same prompts through `render-in-container.sh` only, starting from the
+first run's scenes, with two extra bars: rubric at least 18/20 and the measured geometry check
+(GeometryGuard) passing. That check was added after the owner spotted that the first unit-circle
+video's axes were not symmetric about the circle and its figure sat 5% from the frame edge, a bug
+the first run's visual review (19/20) had missed.
+
+| Folder | Previews | Finals used (cap 3) | Final | Rubric | Geometry (final) | Main fixes |
+|---|---|---|---|---|---|---|
+| `01-unit-circle` | 6 | 2 | 138.9 s | 20/20 | PASS, 9 rules | symmetric axes, figure centred with margins, the doubled labels at 25 s (real for about 0.7 s), caption crossfades, stretched `Indicate` |
+| `02-llm-weights` | 5 | 1 | 150.0 s | 19/20 | PASS, 23 rules | title/caption crossfade overlap, figures re-centred, a caption outside the safe area |
+| `03-git-workflows` | 6 (4 on this scene) | 1 | 138.5 s | 19/20 | PASS, 25 rules (1 unchecked*) | rebase id scramble, HEAD crossing an arrow, chapter layouts off-centre or at 5% margins |
+| `04-fourier-epicycles` | 4 | 1 (+1 stopped) | 129.5 s | 20/20 | PASS, 13 rules | caption swaps, thumbnails crossing, beat-3 rig 0.33 units low, panel off-centre |
+| `05-gradient-descent-narrated` | 4 | 2 | 161.2 s, AAC 161.24 s | 20/20 | PASS, 18 rules | number-line markers 25 px below the axis, panels inside the margin, network off-centre, audio 4 s short (now padded) |
+
+All five finals are 1920x1080 at 60 fps, rendered in the container on the CPU (Cairo, GPU off),
+and pass `out/report.md` with no FAIL and no WARN. *In `03`, `symmetric(forked)` was measured
+and held six times during the final render; the final checker version defers it (UNCHECKED)
+because the tracked graph still references faded-out commit ids, not because it fails.
+Re-measured with `render-in-container.sh <folder> --geometry`: 0 violations in all five.
 
 | Folder | Prompt | Narration | Previews | Final | Rubric |
 |---|---|---|---|---|---|
@@ -23,14 +48,21 @@ prompts run through the container route.
 All five finals are 1920x1080 at 60 fps and pass `qa_check.py` (the narrated one with
 `--expect-audio`).
 
-## Known limitations left in the finals
+## Known limitations left in the finals (container re-run)
 
-- `03-git-workflows`: during each rebase hop the 3-character commit id morphs from old to new and
-  is scrambled for about half a second (found after the iteration cap); HEAD crosses a thin arrow
-  for a few frames in chapter 4.
-- `05-gradient-descent-narrated`: on the number line (beats 3 and 13) the dots, gap segment and
-  square bases sit about 25 px below the axis line (found in the final's full-size frames).
-- `02-llm-weights`: titles and captions crossfade, so for a few frames old and new text overlap.
+- `01-unit-circle`: the recap boxes read as an overline for about half a second while they draw;
+  a half-turn briefly sweeps over the "csc θ" label; the right panel holds only a caption for
+  the first 25 s.
+- `02-llm-weights`: toy values for weights and scores; a 1 s diagonal "staircase" when a row
+  turns into a column; the query/key and neuron beats carry two or three ideas each.
+- `03-git-workflows`: "in a rebase, ours and theirs swap" is a caption without a picture; "pull
+  request" sits 0.14 units from its box edge; two code cards overlap for half a second while
+  merging.
+- `04-fourier-epicycles`: captions name each result while it is still being drawn; the smallest
+  of the 50 arrows tangle near the pen.
+- `05-gradient-descent-narrated`: in beats 1-2 and 8 the lower half of the frame is empty for
+  about 15 s (the network lives in the upper band by design); the network is linear (no
+  activation function).
 
 ## What the runs taught the skill
 

@@ -1,5 +1,12 @@
 {
-  "_comment": "Render with: skills/manim-video/scripts/render-in-container.sh examples/04-fourier-epicycles [--quality final]",
+  "_comment": "Fourier epicycles explainer, silent; scene and storyboard from examples/04-fourier-epicycles (owner change of plan). Render with scripts/render-in-container.sh JOB_DIR (preview), --quality final for the deliverable.",
   "scene": "Explainer",
-  "quality": "preview"
+  "file": "scene.py",
+  "quality": "preview",
+  "renderer": "cairo",
+  "gpu": false,
+  "narration": {"enabled": false},
+  "checks": {"min_duration": 115, "max_duration": 145},
+  "requirements": [],
+  "timeout": 7200
 }

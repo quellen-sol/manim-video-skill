@@ -20,7 +20,8 @@ jobs/<slug>/                 any path you like; one directory per video
 ├── storyboard.md, review.md your planning and review notes (the container ignores them)
 └── out/                     written by the container; the only writable path
     ├── <Scene>-<quality>.mp4    the video (with audio if narrated)
-    ├── report.md, report.json   automated checks: streams, resolution, audio, blank screen,
+    ├── report.md, report.json   automated checks: streams, resolution, audio (narrated: AAC as
+    │                            long as the video, padded if needed), blank screen,
     │                            stalls, pop-ins/flicker, measured geometry (GeometryGuard),
     │                            plus LayoutGuard and Timeline warnings
     ├── geometry.json            GeometryGuard's measurements: every tracked object's box and

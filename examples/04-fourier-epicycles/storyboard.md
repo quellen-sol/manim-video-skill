@@ -53,3 +53,12 @@ One idea per beat. Each beat answers a question raised by the one before.
 ## Open questions for the user (if any)
 
 - None (unattended test run; silent was answered).
+
+## Changes made in this run (container route)
+
+- Beat 3: the two arrows and their labels sit at y -0.075 (not -0.4), so the pair with its labels
+  is centred on the stage; the chain slides back to (0, -0.4) for tip to tail.
+- Beats 7-10: the result's thumbnail appears in its panel slot (no flight across the panel); slots
+  at y 1.25 and -1.65, so the complete panel is centred in its zone (x 1.0 to 6.4).
+- Captions swap in two steps (old out, then new in), never overlapping.
+- Geometry rules (geometry_qa): see review.md, iteration 3.

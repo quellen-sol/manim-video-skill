@@ -1,6 +1,174 @@
 {
-  "_comment": "Render with: skills/manim-video/scripts/render-in-container.sh examples/05-gradient-descent-narrated [--quality final]",
+  "_comment": "Gradient descent and backpropagation on a tiny network (from examples/05-gradient-descent-narrated). Narrated with Kokoro af_heart via manim-voiceover; the scene reads each sentence with line(id).",
   "scene": "Explainer",
+  "file": "scene.py",
   "quality": "preview",
-  "narration": {"enabled": true, "voice": "af_heart"}
+  "renderer": "cairo",
+  "gpu": false,
+  "narration": {
+    "enabled": true,
+    "mode": "voiceover",
+    "voice": "af_heart",
+    "kokoro": {
+      "base_url": "http://127.0.0.1:8880/v1",
+      "model": "kokoro"
+    },
+    "script": {
+      "beats": [
+        {
+          "id": "intro_small",
+          "text": "Here is about the smallest neural network you can train."
+        },
+        {
+          "id": "intro_parts",
+          "text": "One input, one hidden neuron, one output, and two weights."
+        },
+        {
+          "id": "fwd_weights",
+          "text": "Each weight multiplies the signal passing through it."
+        },
+        {
+          "id": "fwd_hidden",
+          "text": "Feed in two. The hidden neuron gets one times two, which is two."
+        },
+        {
+          "id": "fwd_output",
+          "text": "The output gets one half times two, which is one."
+        },
+        {
+          "id": "loss_wanted",
+          "text": "But we wanted three."
+        },
+        {
+          "id": "loss_gap",
+          "text": "To measure how wrong the network is, take the gap between output and target, and square it."
+        },
+        {
+          "id": "loss_value",
+          "text": "That is the loss: two squared, which is four."
+        },
+        {
+          "id": "which_way",
+          "text": "Training means changing the weights to shrink the loss. But which way should each weight move?"
+        },
+        {
+          "id": "valley_slide",
+          "text": "Freeze w one, slide w two, and plot the loss."
+        },
+        {
+          "id": "valley_wall",
+          "text": "It traces a valley, and we are on its left wall."
+        },
+        {
+          "id": "slope_value",
+          "text": "The slope here is minus eight."
+        },
+        {
+          "id": "slope_meaning",
+          "text": "A negative slope means the loss falls as w two grows, so downhill is to the right."
+        },
+        {
+          "id": "step_rule",
+          "text": "Gradient descent steps against the slope, scaled by a small learning rate, here zero point zero five."
+        },
+        {
+          "id": "step_move",
+          "text": "That moves w two from one half to zero point nine, and the loss drops from four to about one and a half."
+        },
+        {
+          "id": "repeat",
+          "text": "Repeat, and the steps shrink as the valley flattens, until we settle at the bottom."
+        },
+        {
+          "id": "many_weights",
+          "text": "A real network has millions of weights, and needs the slope for every one at once."
+        },
+        {
+          "id": "buried",
+          "text": "Back to the start: how does w one, buried deep inside, affect the loss?"
+        },
+        {
+          "id": "nudge_w1",
+          "text": "Nudge w one up by one hundredth."
+        },
+        {
+          "id": "nudge_h",
+          "text": "The hidden value rises by two hundredths."
+        },
+        {
+          "id": "nudge_out",
+          "text": "The output rises by one hundredth."
+        },
+        {
+          "id": "nudge_loss",
+          "text": "And the loss falls by four hundredths."
+        },
+        {
+          "id": "chain_links",
+          "text": "Each link scales the nudge by its own local rate."
+        },
+        {
+          "id": "chain_rates",
+          "text": "Times two, times one half, times minus four."
+        },
+        {
+          "id": "chain_product",
+          "text": "Multiply the rates, and you get the slope for w one: minus four. That is the chain rule."
+        },
+        {
+          "id": "bp_start",
+          "text": "Backpropagation runs the chain rule backwards, starting at the loss."
+        },
+        {
+          "id": "bp_out",
+          "text": "The loss changes at minus four per unit of output."
+        },
+        {
+          "id": "bp_w2",
+          "text": "Times h, which is two, gives the slope for w two: minus eight."
+        },
+        {
+          "id": "bp_h",
+          "text": "Times w two, one half, passes minus two back to the hidden neuron."
+        },
+        {
+          "id": "bp_w1",
+          "text": "Times x, which is two, gives the slope for w one: minus four."
+        },
+        {
+          "id": "bp_done",
+          "text": "One backward sweep, and every slope is known."
+        },
+        {
+          "id": "upd_both",
+          "text": "Now one gradient descent step updates both weights at once."
+        },
+        {
+          "id": "upd_values",
+          "text": "w one becomes one point two, and w two becomes zero point nine."
+        },
+        {
+          "id": "fwd2_run",
+          "text": "Run it forward again."
+        },
+        {
+          "id": "fwd2_output",
+          "text": "The output is now two point one six, much closer to three."
+        },
+        {
+          "id": "fwd2_loss",
+          "text": "And the loss drops from four to about zero point seven."
+        },
+        {
+          "id": "recap_loop",
+          "text": "That is training: a forward pass, a loss, a backward pass for the slopes, and a small step downhill."
+        },
+        {
+          "id": "recap_repeat",
+          "text": "Repeat it, and the loss keeps falling: after one more step, it is almost zero."
+        }
+      ]
+    }
+  },
+  "requirements": []
 }

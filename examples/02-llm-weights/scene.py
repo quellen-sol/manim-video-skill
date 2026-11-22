@@ -4,20 +4,38 @@ connection is a learned weight, stored in matrices that add up to billions of nu
 
 Real numbers are those of Llama 3 8B (d_model 4,096, 32 blocks, MLP width 14,336, 8.03 B params).
 
-Render: "$SKILL_DIR/scripts/render.sh" preview scene.py Explainer
+Render: "$SKILL_DIR/scripts/render-in-container.sh" JOB_DIR [--quality final]
 """
 
 import math
 
 from manim import *
 
-try:  # layout checker; on PYTHONPATH when rendered with render.sh
+try:  # layout and geometry checkers; on PYTHONPATH in the render image
     from manim_qa import LayoutGuard
+    from geometry_qa import GeometryGuard, centered_in, concentric, symmetric, within_margin
 except ImportError:  # keeps the file renderable without the skill
-    print("LAYOUT WARNING manim_qa not importable: layout checks are OFF", flush=True)
+    print("LAYOUT WARNING manim_qa/geometry_qa not importable: layout and geometry checks are OFF",
+          flush=True)
 
     class LayoutGuard:
-        pass
+        def qa_ignore(self, *mobjects):
+            pass
+
+    class GeometryGuard:
+        def geo_track(self, **_):
+            return self
+
+        def geo_rule(self, *_):
+            return self
+
+        def geo_ignore(self, *m):
+            return m[0] if len(m) == 1 else m
+
+    def concentric(*a, **k): return None
+    def symmetric(*a, **k): return None
+    def within_margin(*a, **k): return None
+    def centered_in(*a, **k): return None
 
 # --- style (references/style-guide.md) -----------------------------------------------
 BG = "#0F1117"
@@ -44,12 +62,15 @@ NUM = 28
 
 # --- layout constants -----------------------------------------------------------------
 WORDS = ["The", "cat", "sat", "on", "the"]
-LANE_X = [-5.3, -3.9, -2.5, -1.1, 0.3]           # stack chapter: one lane per token
+PANEL_LEFT = 1.8                                  # right-hand panel: x 1.8 .. 7.11
+FRAME_X = 7.111
+DIAG_CX = (-FRAME_X + PANEL_LEFT) / 2             # centre of the lane-diagram zone (x -7.11 .. 1.8)
+PANEL_CX = (PANEL_LEFT + FRAME_X) / 2             # centre of the panel zone
+LANE_X = [DIAG_CX + 1.4 * k for k in (-2, -1, 0, 1, 2)]   # stack chapter: one lane per token
 STACK_MID_X = (LANE_X[0] + LANE_X[-1]) / 2
 Y_CHIP, Y_VEC0, Y_VEC1, Y_VEC2 = -3.05, -2.15, 0.0, 2.15
 Y_ATT = (-1.3, 0.8)
 Y_MLP = (-0.8, 1.3)
-PANEL_LEFT = 1.8                                  # right-hand panel: x 1.6 .. 6.4
 
 ATT_X = [-4.4, -2.2, 0.0, 2.2, 4.4]              # attention chapter
 ATT_VEC_Y = -0.6
@@ -59,6 +80,13 @@ X_IN = [0.8, -0.5, 0.3, 0.9, -0.2]                # "the" vector entering the ML
 X_QUIET = [-0.7, 0.6, -0.2, -0.9, 0.1]            # an input that does not match
 W_IN = [0.9, -0.6, 0.1, 0.7, 0.4]                 # the neuron's input weights
 W_OUT = [0.5, -0.3, 0.8, 0.2, -0.6]               # the neuron's output weights
+
+
+def leaves(*mobs):
+    """Flatten figures for GeometryGuard. It measures a tracked group's first-level members that
+    are on screen, so a nested group whose items were added one by one (words faded in one at a
+    time, matrix rows, lanes) would be dropped silently; leaf mobjects are always measured."""
+    return VGroup(*[m for mob in mobs for m in mob.get_family() if not m.submobjects])
 
 
 def gelu(s):
@@ -73,6 +101,29 @@ def softmax_pct(scores):
 
 def dot(a, b):
     return float(sum(x * y for x, y in zip(a, b)))
+
+
+def first_half(t):
+    """Rate function: the whole change happens in the first half of the play."""
+    return smooth(min(1.0, 2 * t))
+
+
+def second_half(t):
+    """Rate function: nothing happens until half-way, then the whole change."""
+    return smooth(max(0.0, 2 * t - 1))
+
+
+# Captions get their own pair (same shape, different source). Manim's cache key replaces an object
+# already seen in the same play() by a placeholder, so swapping one already-used rate function for
+# another does not change the key and the old segment is reused; distinct functions avoid that.
+def cap_out(t):
+    """Rate function for a caption leaving: done by half-time."""
+    return smooth(min(1.0, 2.0 * t))
+
+
+def cap_in(t):
+    """Rate function for a caption arriving: starts at half-time."""
+    return smooth(max(0.0, 2.0 * t - 1.0))
 
 
 # --- building blocks ------------------------------------------------------------------
@@ -129,7 +180,7 @@ def grid(mat, w, h):
                   ).arrange(DOWN, buff=0)
 
 
-class Explainer(LayoutGuard, Scene):
+class Explainer(GeometryGuard, LayoutGuard, Scene):
     def construct(self):
         self.title = None
         self.cap = None
@@ -154,21 +205,30 @@ class Explainer(LayoutGuard, Scene):
         self.beat_recap()
 
     # --- helpers ----------------------------------------------------------------------
+    def geo_retire(self, *names):
+        """Stop measuring a figure that is about to be taken apart (its rules go unchecked)."""
+        self.geo_track(**{n: VGroup() for n in names})
+
     def swap_title(self, text):
         new = Text(text, font_size=TITLE_SIZE).to_edge(UP, buff=0.6)
         # keep the titles themselves (not just their ids): a freed title's id can be reused by a
         # new mobject, which clear_stage would then wrongly keep on stage
         self.__dict__.setdefault("titles", []).append(new)
-        anims = [FadeIn(new, shift=0.15 * DOWN)]
-        if self.title is not None:
-            anims.append(FadeOut(self.title, shift=0.15 * UP))
+        # the old title is gone before the new one starts to appear: they never overlap
+        if self.title is None:
+            anims = [FadeIn(new, shift=0.15 * DOWN)]
+        else:
+            anims = [FadeOut(self.title, shift=0.15 * UP, rate_func=first_half),
+                     FadeIn(new, shift=0.15 * DOWN, rate_func=second_half)]
         self.title = new
         return anims
 
     def swap_caption(self, *lines, panel=False):
         anims = []
+        swapping = self.cap is not None and bool(lines)
         if self.cap is not None:
-            anims.append(FadeOut(self.cap))
+            # out in the first half, the new caption in the second: no overlapping lines
+            anims.append(FadeOut(self.cap, rate_func=cap_out if swapping else smooth))
             self.cap = None
         if lines:
             g = VGroup(*lines)
@@ -177,7 +237,7 @@ class Explainer(LayoutGuard, Scene):
                 g.shift((PANEL_LEFT - g.get_left()[0]) * RIGHT)
             else:
                 g.arrange(DOWN, buff=0.15).to_edge(DOWN, buff=0.6)
-            anims.append(FadeIn(g, shift=0.1 * UP))
+            anims.append(FadeIn(g, shift=0.1 * UP, rate_func=cap_in if swapping else smooth))
             self.cap = g
         return anims
 
@@ -187,6 +247,13 @@ class Explainer(LayoutGuard, Scene):
         self.cap = None if self.cap in gone else self.cap
         return [FadeOut(m) for m in gone]
 
+    def edges_to_row(self, edges, row):
+        """A neuron's edges flash, then its row of the matrix appears (same colours, same order)."""
+        flashes = [ShowPassingFlash(e.copy().set_stroke(C_HI, width=5, opacity=1), time_width=0.6)
+                   for e in edges]
+        return AnimationGroup(AnimationGroup(*flashes, rate_func=first_half),
+                              FadeIn(row, shift=0.4 * RIGHT, rate_func=second_half))
+
     # --- beat 1 -----------------------------------------------------------------------
     def beat_hook(self):
         """A concrete picture: text goes in, the next word comes out."""
@@ -195,20 +262,24 @@ class Explainer(LayoutGuard, Scene):
         box = RoundedRectangle(corner_radius=0.2, width=2.4, height=1.3, stroke_color=C_MUTED,
                                stroke_width=3, fill_color=GREY_E, fill_opacity=1)
         llm = VGroup(box, Text("LLM", font_size=40).move_to(box))
-        q = Text("?", font_size=44, color=C_OUT)
-        VGroup(words, llm, q).arrange(RIGHT, buff=1.3).move_to(0.3 * UP)
+        mat = Text("mat", font_size=40, color=C_OUT)
+        VGroup(words, llm, mat).arrange(RIGHT, buff=1.3).move_to(ORIGIN)   # centred as it ends
+        q = Text("?", font_size=44, color=C_OUT).move_to(mat).align_to(mat, LEFT)
         a1 = Arrow(words.get_right(), llm.get_left(), buff=0.2, color=C_MUTED)
-        a2 = Arrow(llm.get_right(), q.get_left(), buff=0.2, color=C_MUTED)
-        mat = Text("mat", font_size=40, color=C_OUT).move_to(q).align_to(q, LEFT)
+        a2 = Arrow(llm.get_right(), mat.get_left(), buff=0.2, color=C_MUTED)
 
         self.play(*self.swap_title("Inside a large language model"))
         self.play(LaggedStart(*[FadeIn(w, shift=0.15 * UP) for w in words], lag_ratio=0.15),
                   run_time=1.2)
         self.play(GrowArrow(a1), FadeIn(llm), run_time=1)
         self.play(GrowArrow(a2), FadeIn(q), run_time=0.8)
-        self.play(FadeTransform(q, mat), *self.swap_caption(T("it predicts the next token")))
+        self.play(FadeOut(q, rate_func=first_half), FadeIn(mat, rate_func=second_half),
+                  *self.swap_caption(T("it predicts the next token")))
+        self.geo_track(hook=leaves(words, a1, llm, a2, mat))
+        self.geo_rule(centered_in("hook", "frame"), within_margin("hook", pct=7))
         self.wait(1.5)
-        self.play(Indicate(box, color=C_HI, scale_factor=1.05),
+        self.play(ShowPassingFlash(box.copy().set_fill(opacity=0).set_stroke(C_HI, width=6),
+                                   time_width=0.5),
                   *self.swap_caption(T("What happens inside the box?")))
         self.wait(0.8)
         self.hook = (words, VGroup(llm, a1, a2, mat))
@@ -217,6 +288,7 @@ class Explainer(LayoutGuard, Scene):
     def beat_tokens(self):
         """Text becomes tokens."""
         words, rest = self.hook
+        self.geo_retire("hook")
         chips = [chip(w, [x, Y_CHIP, 0]) for w, x in zip(WORDS, LANE_X)]
         self.play(FadeOut(rest), *self.swap_title("Text becomes tokens"), *self.swap_caption(),
                   run_time=0.8)
@@ -226,13 +298,19 @@ class Explainer(LayoutGuard, Scene):
                                      T("(words or word pieces)", SMALL, C_MUTED), panel=True))
         self.wait(1.2)
         self.chips = VGroup(*chips)
+        self.geo_track(stack_fig=leaves(self.chips))
+        self.geo_rule(symmetric("stack_fig", about=(DIAG_CX, 0), axis="x"),
+                      within_margin("stack_fig", pct=7))
 
     # --- beat 3 -----------------------------------------------------------------------
     def beat_embedding(self):
         """Each token looks up its row in the embedding table: a vector."""
-        table = grid(self.table_vals, 0.42, 0.3).move_to([4.0, 0.3, 0])
+        table = grid(self.table_vals, 0.42, 0.3).move_to([PANEL_CX, 0.3, 0])
         t_lbl = T("embedding table", 28).next_to(table, UP, buff=0.25)
-        t_sub = T("128,256 rows: one per token", SMALL, C_MUTED).next_to(table, DOWN, buff=0.2)
+        t_sub = VGroup(T("128,256 rows:", SMALL, C_MUTED), T("one per token", SMALL, C_MUTED)
+                       ).arrange(DOWN, buff=0.08).next_to(table, DOWN, buff=0.2)
+        self.geo_track(table=leaves(table, t_lbl, t_sub))
+        self.geo_rule(symmetric("table", about=(PANEL_CX, 0), axis="x"), within_margin("table", pct=7))
         self.play(*self.swap_title("Each token becomes a vector"), *self.swap_caption(),
                   LaggedStart(*[FadeIn(r) for r in table], lag_ratio=0.1), FadeIn(t_lbl),
                   FadeIn(t_sub), run_time=1.5)
@@ -252,6 +330,7 @@ class Explainer(LayoutGuard, Scene):
                                              T("4,096 numbers (5 drawn)", SMALL, C_MUTED),
                                              panel=True))
         self.wait(1)
+        self.geo_track(stack_fig=leaves(self.chips, *self.vecs))
         self.play(FadeOut(VGroup(table, t_lbl, t_sub)), run_time=0.8)
 
     # --- beat 4 -----------------------------------------------------------------------
@@ -267,6 +346,7 @@ class Explainer(LayoutGuard, Scene):
                   run_time=1.6)
         self.wait(1.2)
         self.lanes = lanes
+        self.geo_track(stack_fig=leaves(self.chips, *self.vecs, lanes))
 
     # --- beat 5 -----------------------------------------------------------------------
     def make_block(self, k, label):
@@ -294,8 +374,10 @@ class Explainer(LayoutGuard, Scene):
         cap = VGroup(l1, l2).arrange(DOWN, buff=0.15, aligned_edge=LEFT).to_edge(DOWN, buff=0.6)
         cap.shift((PANEL_LEFT - cap.get_left()[0]) * RIGHT)
 
-        self.play(*self.swap_title("Inside each block"), *self.swap_caption(),
-                  FadeIn(band), FadeIn(a_lbl), FadeIn(l1), run_time=1.2)
+        old_cap = self.swap_caption()   # fade the previous caption out first ...
+        old_cap = [FadeOut(a.mobject, rate_func=cap_out) for a in old_cap]
+        self.play(*self.swap_title("Inside each block"), *old_cap,
+                  FadeIn(band), FadeIn(a_lbl), FadeIn(l1, rate_func=cap_in), run_time=1.2)
         sweep = Line(band.get_left(), band.get_right()).set_stroke(C_HI, width=6)
         self.play(ShowPassingFlash(sweep, time_width=0.5), run_time=1.2)
         self.wait(0.5)
@@ -308,6 +390,7 @@ class Explainer(LayoutGuard, Scene):
         self.add(cap)  # the lines were faded in one by one; make the group the stage object
         self.cap = cap
         self.blk1 = blk
+        self.geo_track(stack_fig=leaves(self.chips, *self.vecs, self.lanes, blk[0], blk[1]))
 
     # --- beat 6 -----------------------------------------------------------------------
     def beat_stack(self):
@@ -324,6 +407,8 @@ class Explainer(LayoutGuard, Scene):
         self.wait(1.2)
         self.blk2 = blk2
         self.dots = dots
+        self.geo_track(stack_fig=leaves(self.chips, *self.vecs, self.lanes, self.blk1[0],
+                                        self.blk1[1], blk2[0], blk2[1]))
 
     # --- beat 7 -----------------------------------------------------------------------
     def beat_flow(self):
@@ -332,7 +417,7 @@ class Explainer(LayoutGuard, Scene):
         vals1 = [np.clip(v + rng.normal(0, 0.45, 5), -1, 1) for v in self.vals0]
         vals2 = [np.clip(v + rng.normal(0, 0.45, 5), -1, 1) for v in vals1]
         self.play(*self.swap_title("Each block updates the vectors"),
-                  *self.swap_caption(T("each block adds an update"),
+                  *self.swap_caption(T("blocks add updates"),
                                      T("to every token's vector", SMALL, C_MUTED), panel=True))
         for vals, y, blk in ((vals1, Y_VEC1, self.blk1), (vals2, Y_VEC2, self.blk2)):
             targets = [vector(v).move_to([x, y, 0]).set_z_index(1) for v, x in zip(vals, LANE_X)]
@@ -349,15 +434,15 @@ class Explainer(LayoutGuard, Scene):
         """The last token's final vector scores every possible next token."""
         top = self.vecs[4]
         names = ["mat", "floor", "bed"]
-        lengths = [2.3, 1.1, 0.5]
+        lengths = [1.9, 0.9, 0.4]
         rows = VGroup()
         for i, (n, L) in enumerate(zip(names, lengths)):
             y = Y_VEC2 + 0.45 - 0.4 * i          # keeps "bed" clear of the block-32 brace below
             word = Text(n, font_size=CAP, color=C_OUT if i == 0 else WHITE)
-            word.move_to([3.5, y, 0]).align_to([3.5, 0, 0], RIGHT)
+            word.move_to([4.0, y, 0]).align_to([4.0, 0, 0], RIGHT)
             bar = Rectangle(width=L, height=0.28, stroke_width=0, fill_color=C_OUT,
                             fill_opacity=0.85 if i == 0 else 0.45)
-            bar.move_to([3.65, y, 0]).align_to([3.65, 0, 0], LEFT)
+            bar.move_to([4.15, y, 0]).align_to([4.15, 0, 0], LEFT)
             rows.add(VGroup(word, bar))
         brace = Brace(rows, LEFT, buff=0.12, color=C_MUTED)
         arrow = Arrow(top.get_right(), brace.get_tip(), buff=0.12, color=C_OUT)
@@ -368,6 +453,9 @@ class Explainer(LayoutGuard, Scene):
                   *self.swap_caption(T("the last vector scores"),
                                      T("every possible next token", SMALL, C_MUTED), panel=True),
                   run_time=1.6)
+        self.geo_track(prediction=leaves(brace, rows))
+        self.geo_rule(symmetric("prediction", about=(PANEL_CX, 0), axis="x", tol=0.12),
+                      within_margin("prediction", pct=7))
         self.play(Indicate(rows[0], color=C_HI), run_time=1)
         self.wait(1.5)
         self.out_rows = rows
@@ -376,7 +464,7 @@ class Explainer(LayoutGuard, Scene):
     def beat_attention(self):
         """Attention: 'the' pulls information from earlier tokens, more from some than others."""
         self.play(*self.swap_title("Zoom in: attention"),
-                  Circumscribe(self.blk1[0], color=C_HI), run_time=1.4)
+                  Create(SurroundingRectangle(self.blk1[0], color=C_HI, buff=0.08)), run_time=1.4)
         self.play(*self.clear_stage(), run_time=0.8)
 
         chips = VGroup(*[chip(w, [x, ATT_VEC_Y - 1.25, 0]) for w, x in zip(WORDS, ATT_X)])
@@ -384,6 +472,8 @@ class Explainer(LayoutGuard, Scene):
                         for v, x in zip(self.vals0, ATT_X)])
         self.play(LaggedStart(*[FadeIn(VGroup(c, v), shift=0.2 * UP) for c, v in zip(chips, vecs)],
                               lag_ratio=0.12), run_time=1.4)
+        self.geo_track(att_row=leaves(chips, vecs))
+        self.geo_rule(symmetric("att_row", about=(0, 0), axis="x"), within_margin("att_row", pct=7))
 
         pct = softmax_pct(SCORES)
         top_y = vecs[0].get_top()[1] + 0.08
@@ -456,7 +546,8 @@ class Explainer(LayoutGuard, Scene):
         pct = softmax_pct(SCORES)
         pct_lbls = VGroup(*[MathTex(rf"{p}\%", font_size=34, color=C_ATTN_T).move_to(s)
                             for p, s in zip(pct, scores)])
-        self.play(*[FadeTransform(s, p) for s, p in zip(scores, pct_lbls)], FadeOut(ghosts),
+        self.play(*[FadeOut(s, rate_func=first_half) for s in scores],
+                  *[FadeIn(p, rate_func=second_half) for p in pct_lbls], FadeOut(ghosts),
                   *self.swap_caption(T("scores become shares that add up to 100%")),
                   run_time=1.2)
         self.wait(1.5)
@@ -482,15 +573,16 @@ class Explainer(LayoutGuard, Scene):
     def beat_neuron(self):
         """One MLP neuron: weighted sum, a bend, then it writes a pattern back."""
         the_vec = self.the_vec
-        xin = numbered_vector(X_IN).move_to([-5.0, 0, 0])
+        xin = numbered_vector(X_IN).move_to([-4.2, 0, 0])
         x_lbl = T("“the” vector", SMALL, C_MUTED).next_to(xin, DOWN, buff=0.25)
         self.add(the_vec)  # split it out of its (chip, vector) group so it can stay
+        self.geo_retire("att_row")   # the row is taken apart: only "the" vector stays
         self.play(*self.swap_title("Zoom in: one MLP neuron"),
                   *self.clear_stage(keep=[the_vec]), run_time=0.8)
         self.play(ReplacementTransform(the_vec, xin[0]), run_time=1.2)
         self.play(FadeIn(xin[1]), FadeIn(x_lbl), run_time=0.6)
 
-        N = np.array([-0.8, 0.0, 0.0])
+        N = np.array([0.0, 0.0, 0.0])
         R = 0.45
         s = ValueTracker(0.0)
         neuron = Circle(radius=R, stroke_color=C_MLP, stroke_width=5, fill_color=C_HI,
@@ -503,6 +595,9 @@ class Explainer(LayoutGuard, Scene):
             n = number(w, 1, 30, sign_color(w))
             n.add_background_rectangle(color=BG, opacity=1, buff=0.04)
             w_lbls.add(n.move_to(e.point_from_proportion(0.33)))
+        self.qa_ignore(*w_lbls)
+        self.geo_track(neuron=neuron)
+        self.geo_rule(centered_in("neuron", "frame", tol=0.1))
         self.play(Create(neuron), FadeIn(n_lbl), run_time=0.8)
         self.play(LaggedStart(*[Create(e) for e in edges], lag_ratio=0.12),
                   LaggedStart(*[FadeIn(l) for l in w_lbls], lag_ratio=0.12),
@@ -531,13 +626,14 @@ class Explainer(LayoutGuard, Scene):
 
         axes = Axes(x_range=[-3, 3, 1], y_range=[-0.5, 2.5, 1], x_length=3.6, y_length=2.4,
                     tips=False, axis_config={"color": C_MUTED, "stroke_width": 2}
-                    ).move_to([3.6, 0.1, 0])
+                    ).move_to([3.4, 0.1, 0])
         curve = axes.plot(gelu, x_range=[-3, 2.5], color=C_MLP, stroke_width=4)
         a_title = T("activation", SMALL, C_MLP).next_to(axes, UP, buff=0.2).align_to(axes, LEFT)
         x_name = T("sum", 24, C_MUTED).next_to(axes.x_axis.get_right(), RIGHT, buff=0.12)
         y_name = T("out", 24, C_MUTED).next_to(axes.y_axis.get_top(), RIGHT, buff=0.12)
-        foot = T("Llama-style MLPs: gated (SwiGLU)", 24, C_MUTED)
-        foot.next_to(axes, DOWN, buff=0.35)
+        # two short lines under the plot: one line was 5.2 wide and ran into the sum/out readout
+        foot = VGroup(T("Llama-style MLPs:", 24, C_MUTED), T("gated (SwiGLU)", 24, C_MUTED))
+        foot.arrange(DOWN, buff=0.08).next_to(axes, DOWN, buff=0.3)
 
         def marker():
             v = s.get_value()
@@ -547,6 +643,9 @@ class Explainer(LayoutGuard, Scene):
 
         mark = always_redraw(marker)
         plot = VGroup(axes, curve, a_title, x_name, y_name)
+        self.geo_track(plot=leaves(plot, foot), x_axis=axes.x_axis)
+        self.geo_rule(within_margin("plot", pct=7),
+                      symmetric("x_axis", about=axes.c2p(0, 0)[:2], axis="x"))
         self.play(Create(axes), Create(curve), FadeIn(a_title), FadeIn(x_name), FadeIn(y_name),
                   FadeIn(foot), run_time=1.5)
         mark0 = marker()
@@ -561,7 +660,7 @@ class Explainer(LayoutGuard, Scene):
             new = VGroup(*[number(v, 1, 30).move_to(c) for v, c in zip(vals, xin[0])])
             anims = [c.animate.set_fill(sign_color(v), opacity=0.08 + 0.5 * min(abs(v), 1))
                      for c, v in zip(xin[0], vals)]
-            anims += [FadeOut(old), FadeIn(new)]
+            anims += [FadeOut(old, rate_func=first_half), FadeIn(new, rate_func=second_half)]
             xin.submobjects[1] = new
             return anims
 
@@ -580,7 +679,7 @@ class Explainer(LayoutGuard, Scene):
         mark.clear_updaters()
         self.play(FadeOut(plot), FadeOut(mark), FadeOut(foot), run_time=0.8)
         out_vals = [gelu(s_fire) * d for d in W_OUT]
-        yout = numbered_vector(out_vals, nd=2).move_to([3.4, 0, 0])
+        yout = numbered_vector(out_vals, nd=2).move_to([4.2, 0, 0])
         y_lbl = T("update to “the”", SMALL, C_MUTED).next_to(yout, DOWN, buff=0.25)
         edges_out = VGroup(*[edge_from(N, R, c.get_left(), d) for c, d in zip(yout[0], W_OUT)])
         edges_out.set_z_index(-1)
@@ -589,11 +688,18 @@ class Explainer(LayoutGuard, Scene):
             n = number(d, 1, 30, sign_color(d))
             n.add_background_rectangle(color=BG, opacity=1, buff=0.04)
             d_lbls.add(n.move_to(e.point_from_proportion(0.67)))
+        self.qa_ignore(*d_lbls)
         self.play(LaggedStart(*[Create(e) for e in edges_out], lag_ratio=0.12),
                   LaggedStart(*[FadeIn(l) for l in d_lbls], lag_ratio=0.12),
                   *self.swap_caption(T("its output weights write a pattern back")),
                   run_time=1.6)
         self.play(FadeIn(yout), FadeIn(y_lbl), run_time=1)
+        # the finished figure: input and output vectors mirror each other about the neuron
+        self.geo_track(neuron_io=leaves(xin[0], yout[0]),
+                       neuron_fig=leaves(xin, x_lbl, neuron, n_lbl, readout, edges, w_lbls,
+                                         edges_out, d_lbls, yout, y_lbl))
+        self.geo_rule(symmetric("neuron_io", about="neuron", axis="x"),
+                      within_margin("neuron_fig", pct=7))
         self.wait(1.2)
         cap_a = Text("input weights: the pattern it detects", font_size=CAP,
                      t2c={"input weights:": C_MLP})
@@ -619,10 +725,10 @@ class Explainer(LayoutGuard, Scene):
 
         self.play(*self.swap_title("Many neurons = a weight matrix"), *self.clear_stage(),
                   run_time=0.8)
-        xv = vector(X_IN, 0.6, 0.5).move_to([-5.2, 0, 0])
+        xv = vector(X_IN, 0.6, 0.5).move_to([-5.5, 0, 0])
         ny = [1.5 - 0.6 * k for k in range(6)]
         neurons = VGroup(*[Circle(radius=0.22, stroke_color=C_MLP, stroke_width=3,
-                                  fill_color=C_HI, fill_opacity=0).move_to([-2.4, y, 0])
+                                  fill_color=C_HI, fill_opacity=0).move_to([-2.7, y, 0])
                            for y in ny])
         edges = VGroup(*[VGroup(*[edge_to(c.get_right(), n.get_center(), 0.22, W[k][j], max_w=4)
                                   for j, c in enumerate(xv)]) for k, n in enumerate(neurons)])
@@ -634,14 +740,14 @@ class Explainer(LayoutGuard, Scene):
                   run_time=1.8)
         self.wait(1)
 
-        up = grid(W, 0.5, 0.6).move_to([1.25, 0, 0])
+        up = grid(W, 0.5, 0.6).move_to([0.95, 0, 0])
         up_lbl = MathTex(r"W_{\text{up}}", font_size=40, color=C_MLP).next_to(up, UP, buff=0.2)
         self.play(*[g.animate.set_stroke(opacity=0.12) for g in edges[1:]],
                   Indicate(neurons[0], color=C_HI), run_time=0.8)
-        self.play(TransformFromCopy(edges[0], up[0]),
+        self.play(self.edges_to_row(edges[0], up[0]),
                   *self.swap_caption(T("row 1 = neuron 1's input weights")), run_time=1.4)
         self.wait(0.8)
-        self.play(LaggedStart(*[TransformFromCopy(edges[k], up[k]) for k in range(1, 6)],
+        self.play(LaggedStart(*[self.edges_to_row(edges[k], up[k]) for k in range(1, 6)],
                               lag_ratio=0.15),
                   *[edges[k].animate.set_stroke(opacity=0.5) for k in range(1, 6)],
                   FadeIn(up_lbl), *self.swap_caption(T("one row per neuron: a matrix")),
@@ -663,13 +769,15 @@ class Explainer(LayoutGuard, Scene):
         self.wait(1)
         self.play(FadeOut(xrow), FadeOut(x_tag), run_time=0.6)
 
-        down = grid(Wd, 0.4, 0.5).move_to([4.9, 0, 0])
+        down = grid(Wd, 0.4, 0.5).move_to([4.6, 0, 0])
         down_lbl = MathTex(r"W_{\text{down}}", font_size=40, color=C_MLP
                            ).next_to(down, UP, buff=0.2)
         down_lbl.align_to(up_lbl, DOWN)
         col = SurroundingRectangle(VGroup(*[row[0] for row in down]), color=C_HI, buff=0.04)
         self.play(FadeIn(down, shift=0.2 * LEFT), FadeIn(down_lbl),
                   *self.swap_caption(T("output weights form a second matrix")), run_time=1.2)
+        self.geo_track(mlp_fig=leaves(xv, neurons, up, down))
+        self.geo_rule(symmetric("mlp_fig", about=(0, 0), axis="x"), within_margin("mlp_fig", pct=7))
         self.play(Create(col), *self.swap_caption(T("column 1 = neuron 1's output weights")),
                   run_time=0.8)
         self.wait(1.2)
@@ -708,6 +816,9 @@ class Explainer(LayoutGuard, Scene):
 
         self.play(*self.swap_title("Counting the weights (Llama 3 8B)"), *self.clear_stage(),
                   run_time=0.8)
+        self.geo_track(one_block=leaves(rects, lbls))
+        self.geo_rule(symmetric("one_block", about=(0, 0), axis="x"),
+                      within_margin("one_block", pct=7))
         self.play(LaggedStart(*[AnimationGroup(GrowFromEdge(r, DOWN), FadeIn(l))
                                 for r, l in zip(rects, lbls)], lag_ratio=0.15), run_time=2.2)
         self.play(GrowFromCenter(att_brace), FadeIn(att_txt), GrowFromCenter(mlp_brace),
@@ -731,6 +842,9 @@ class Explainer(LayoutGuard, Scene):
         )
         big = Text("≈ 8.0 billion weights", font_size=48).move_to([0, 1.8, 0])
         self.play(*self.clear_stage(), run_time=0.8)
+        self.geo_track(model_bar=leaves(segs, seg_lbls))
+        self.geo_rule(symmetric("model_bar", about=(0, 0), axis="x"),
+                      within_margin("model_bar", pct=7))
         self.play(FadeIn(big, shift=0.2 * DOWN), run_time=1)
         self.play(LaggedStart(*[GrowFromEdge(sg, LEFT) for sg in segs], lag_ratio=0.3),
                   LaggedStart(*[FadeIn(l) for l in seg_lbls], lag_ratio=0.3),
@@ -766,6 +880,8 @@ class Explainer(LayoutGuard, Scene):
             slot = Rectangle(width=1.0, height=0.7, stroke_width=0).add(icon_box.move_to(ORIGIN))
             lines.add(VGroup(slot, txt).arrange(RIGHT, buff=0.3))
         lines.arrange(DOWN, aligned_edge=LEFT, buff=0.45).move_to([0, -0.1, 0])
+        self.geo_track(recap=leaves(lines))
+        self.geo_rule(centered_in("recap", "frame"), within_margin("recap", pct=7))
         self.play(*self.swap_title("Recap"), *self.clear_stage(), run_time=0.8)
         self.play(LaggedStart(*[FadeIn(l, shift=0.2 * RIGHT) for l in lines], lag_ratio=0.5),
                   run_time=3)

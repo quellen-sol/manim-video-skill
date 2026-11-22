@@ -82,3 +82,12 @@ start `w1 = 1`, `w2 = 0.5`, learning rate `η = 0.05`.
 - 38 voiceover blocks, one per sentence or clause (beat 10's list sentence got its own block so
   each ×rate appears as it is spoken). Final length 159 s (target about 160 s).
 - Beat 5's "downhill" arrow sits inside the valley, parallel to the tangent.
+
+## This run (container route, 2026-11-21)
+
+Same beats, numbers, colours and narration as above (the owner asked to keep content and length).
+Changes: narration moved into job.json (`line(id)`); number-line points now sit on the axis
+(`number_line()` anchors value 0 on `NL_ORIGIN`); highlights and value changes follow the current
+SKILL.md (flash along links instead of `Indicate` on arrows, `SurroundingRectangle` instead of
+`Circumscribe`, fade-out-then-in instead of `Transform` between different numbers). Further fixes
+from the previews are logged in review.md.

@@ -25,7 +25,13 @@ TTS server (as `host.docker.internal`) and the key.
 Keep the words in job.json (`narration.script`, `{"beats": [{"id": "intro", "text": "..."}]}`)
 and read them in the scene with `from narration_script import line`, then
 `with self.voiceover(text=line("intro")) as tracker:`. You can then rewrite a sentence without
-touching the code. Plain strings in `self.voiceover(text="...")` work too.
+touching the code. Plain strings in `self.voiceover(text="...")` work too. If the scene already
+uses `line` as a variable name (a `NumberLine`, say), import it under another name:
+`from narration_script import line as say`.
+
+manim-voiceover's audio track stops after the last clip, so a silent outro leaves it shorter than
+the picture. In the container, the delivered video's audio is padded with silence to the video's
+length, and `out/report.md` checks it (`av_length`: AAC, within 0.1 s of the video).
 
 ```python
 from manim import *

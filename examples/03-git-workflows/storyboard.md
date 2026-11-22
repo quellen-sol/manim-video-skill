@@ -1,5 +1,11 @@
 # Storyboard: Git, visually
 
+> Adopted from `examples/03-git-workflows/` at the owner's request (keep content and length,
+> about 139 s). Changes in this run: beat 2 snapshots shrink into the commit instead of
+> morphing; beats 4-5 highlight with a flash / box instead of Indicate / Circumscribe; beat 8
+> copies hop with their old ids and swap ids with a fade; beat 9 HEAD goes around the right end
+> of the graph on `git switch main`; beat 13 the green frame wraps the check mark.
+
 - **Request:** "show an animation of git actions - commit, branching, merging, rebasing, conflict
   resolution strategies in an enterprise environment, etc"
 - **Learning goal:** "A commit is a snapshot that points to its parent and a branch is just a
@@ -36,14 +42,14 @@ Parent arrows point from a commit to its parent (right to left), as git stores t
 | # | Time (s) | The one idea | Visual metaphor and what appears / leaves | On-screen text (short) |
 |---|---|---|---|---|
 | 1 | 0-4 | Hook: a team's code history | Title card fades in and out | "Git, visually" / "how a team's code history grows" |
-| 2 | 4-14 | A commit is a snapshot | File card `app.py`; a line turns yellow (an edit); a copy of the card shrinks into a commit circle on the main lane. Repeat: second commit with an arrow to the first | ch "1 Commits"; `$ git commit`; "a commit saves a snapshot of your files" then "each commit points to its parent" |
+| 2 | 4-14 | A commit is a snapshot | File card `app.py`; a line turns yellow (an edit); a text-free copy of the card shrinks into the commit's slot, then the commit fades in. Repeat: second commit with an arrow to the first | ch "1 Commits"; `$ git commit`; "a commit saves a snapshot of your files" then "each commit points to its parent" |
 | 3 | 14-22 | A branch is a label | `main` tag appears on the newest commit; third commit: the tag slides forward. File card leaves | "a branch is a label on a commit" then "commit again: the label moves along" |
 | 4 | 22-29 | New branch = new label; HEAD | `HEAD` tag appears above `main`; `git switch -c feature`: `feature` tag on the same commit, HEAD moves to it | ch "2 Branches"; "HEAD marks the branch you are on" then "a new branch: a second label, same commit" |
 | 5 | 29-34 | Only the checked-out branch moves | Two commits on the lower lane; feature + HEAD slide; main stays (indicated) | "only the branch you are on moves" |
 | 6 | 34-38 | Divergence | A teammate's commit lands on main; main slides; fork is visible | "meanwhile a teammate's work lands on main" |
 | 7 | 38-47 | Merge commit | `git switch main` (HEAD moves); `git merge feature`: commit M with two parent arrows (flash yellow); main + HEAD slide to M | ch "3 Merge"; "a merge commit has two parents" |
-| 8 | 47-60 | Rebase replays copies | Rewind (M leaves, main back); `git switch feature`; `git rebase main`: copies with new ids grow from the originals onto the tip of main; originals become ghosts | ch "4 Rebase"; "rewind: same start, another option"; "rebase replays your commits on top of main"; "new commits, new ids: the old ones are left behind" |
-| 9 | 60-67 | Fast-forward, linear history | `git switch main`, `git merge feature`: main tag just slides (no new commit); ghosts leave and the line straightens | "main just slides forward: a fast-forward"; "one straight line of history" |
+| 8 | 47-60 | Rebase replays copies | Rewind (M leaves, main back); `git switch feature`; `git rebase main`: copies of e5b and 9a0 hop together (same arc offset) onto the tip of main, still showing the old ids; arrows grow; tags follow; originals become ghosts while the ids fade to 2be and 6d7 | ch "4 Rebase"; "rewind: same start, another option"; "rebase replays your commits on top of main"; "new commits, new ids: the old ones are left behind" |
+| 9 | 60-67 | Fast-forward, linear history | `git switch main` (HEAD goes around the right end of the graph, crossing no arrow), `git merge feature`: main tag just slides (no new commit); ghosts leave and the line straightens | "main just slides forward: a fast-forward"; "one straight line of history" |
 | 10 | 67-71 | The golden rule | Warning caption (red) | "only rebase commits nobody else has yet" |
 | 11 | 71-79 | Why conflicts happen | Stage cleared. Base card `getUser(id)` above; main's card `fetchUser(id)` (blue part) and feature's card `getUser(id, cache)` (orange part); arrows from base | ch "5 Conflicts"; "both branches changed the same line" |
 | 12 | 79-84 | Git stops and marks it | `git merge feature`: the two cards merge into one red-bordered file with `<<<<<<< HEAD`, `=======`, `>>>>>>> feature`; labels ours (blue) / theirs (orange) | "Git can't choose: it marks the conflict" |

@@ -3,16 +3,35 @@
 The point on the unit circle is (cos θ, sin θ); the tangent line at that point is cut by the
 axes into tan θ and cot θ; the distances from the centre to those crossings are sec θ and csc θ.
 
-Render: "$SKILL_DIR/scripts/render.sh" preview scene.py Explainer
+Render: "$SKILL_DIR/scripts/render-in-container.sh" JOB_DIR   (job.json: {"scene": "Explainer"})
 """
 
 from manim import *
 
-try:  # layout checker; on PYTHONPATH when rendered with render.sh
+try:  # layout checker; on PYTHONPATH in the render image
     from manim_qa import LayoutGuard
 except ImportError:  # keeps the file renderable without the skill
+    print("LAYOUT-GUARD unavailable: manim_qa not importable; layout checks are off", flush=True)
+
     class LayoutGuard:
         pass
+
+try:  # measured geometry checker (render image)
+    from geometry_qa import GeometryGuard, centered_in, concentric, symmetric, within_margin
+except ImportError:
+    print("GEOMETRY-GUARD unavailable: geometry_qa not importable; geometry checks are off", flush=True)
+
+    class GeometryGuard:
+        def geo_track(self, **named):
+            return self
+
+        def geo_rule(self, *rules):
+            return self
+
+    def _no_rule(*args, **kwargs):
+        return None
+
+    centered_in = concentric = symmetric = within_margin = _no_rule
 
 # --- style (references/style-guide.md) -----------------------------------------------
 config.background_color = "#0F1117"
@@ -32,18 +51,28 @@ C_SCAFFOLD = GREY_B
 FUNC_COLOURS = {r"\sin": C_SIN, r"\cos": C_COS, r"\tan": C_TAN,
                 r"\sec": C_SEC, r"\cot": C_COT, r"\csc": C_CSC}
 
-CAPTION_SIZE = 32
-LABEL_SIZE = 34
+CAPTION_SIZE = 30
+LABEL_SIZE = 32
 EQ_SIZE = 40
 READOUT_SIZE = 36
 SEG_W = 6
 
 # --- layout ---------------------------------------------------------------------------
 THETA0 = 55 * DEGREES
-HOME = {"ox": -3.8, "oy": -0.8, "r": 2.5}    # diagram on the left, panel on the right
-WIDE = {"ox": -4.6, "oy": -1.6, "r": 1.4}    # zoomed out for the final sweep
-PANEL_X = 1.7                                # left edge of the side panel
-PANEL_W = 6.4 - PANEL_X
+# The axes are always symmetric about the circle's centre (half-lengths XR, YU in radii), so
+# the figure (axes + circle) is centred on O. Each layout centres it in its own region with at
+# least 7% of the frame width/height as margin (checked by GeometryGuard).
+HOME = {"ox": -2.45, "oy": 0.0, "r": 2.0}    # diagram centred in the left region, panel right
+WIDE = {"ox": 0.0, "oy": -0.35, "r": 0.95}   # zoomed out for the limit sweep: below the caption band
+HOME_REGION = (-7.11, -4.0, 2 * HOME["ox"] + 7.11, 4.0)   # left of the panel; centre = O
+WIDE_REGION = (-7.11, -4.0, 7.11, 3.3)                    # under the caption band; centre = O
+AX0 = 1.25                                   # axis half-length (radii) before the tangent line
+XR_TAN = (1 / np.cos(THETA0) + 0.06) / 1.0   # reaches just past E (sec θ0) on both sides
+YU_TAN = 1 / np.sin(THETA0) + 0.125          # reaches just past F (csc θ0) on both sides
+XR_WIDE = 1 / np.cos(80 * DEGREES) + 0.13    # past E at 80°
+YU_WIDE = 1 / np.sin(20 * DEGREES) + 0.26    # past F at 20°
+PANEL_X = 2.35                               # left edge of the side panel (HOME)
+RD_X = 1.5                                   # left edge of captions/readouts in WIDE (first quadrant)
 CAPTION_Y = 3.0
 SEC_DROP = 0.7       # the sec dimension line runs this far below the x-axis (cos is on the axis)
 SAFE_X, SAFE_Y = 6.4, 3.4
@@ -68,7 +97,7 @@ def support(m, u):
     return (abs(u[0]) * m.width + abs(u[1]) * m.height) / 2
 
 
-class Explainer(LayoutGuard, Scene):
+class Explainer(GeometryGuard, LayoutGuard, Scene):
     def construct(self):
         self.setup_geometry()
         self.beat_circle()
@@ -93,9 +122,10 @@ class Explainer(LayoutGuard, Scene):
         self.OX = ValueTracker(HOME["ox"])
         self.OY = ValueTracker(HOME["oy"])
         self.RR = ValueTracker(HOME["r"])
-        self.XR = ValueTracker(1.25)   # positive x-axis length, in radii
-        self.YU = ValueTracker(1.25)   # positive y-axis length, in radii
+        self.XR = ValueTracker(AX0)    # x-axis half-length, in radii (same on both sides)
+        self.YU = ValueTracker(AX0)    # y-axis half-length, in radii (same on both sides)
         self.cap = None
+        self.cap_x = PANEL_X
         self._safe_seen = set()
 
     def th(self):
@@ -137,14 +167,16 @@ class Explainer(LayoutGuard, Scene):
     def caption(self, *parts):
         mobs = [Text(p, font_size=CAPTION_SIZE) if isinstance(p, str) else p for p in parts]
         new = VGroup(*mobs).arrange(RIGHT, buff=0.18)
-        if new.width > PANEL_W:
-            new.scale_to_fit_width(PANEL_W)
-        new.move_to([PANEL_X + new.width / 2, CAPTION_Y, 0])
+        width = SAFE_X - self.cap_x
+        if new.width > width:
+            new.scale_to_fit_width(width)
+        new.move_to([self.cap_x + new.width / 2, CAPTION_Y, 0])
         if self.cap is None:
             self.play(FadeIn(new, shift=0.15 * DOWN), run_time=0.7)
         else:
-            self.play(AnimationGroup(FadeOut(self.cap, shift=0.15 * UP),
-                                     FadeIn(new, shift=0.15 * DOWN), lag_ratio=0.6), run_time=0.9)
+            # old caption leaves first, then the new one arrives (a crossfade smears both texts)
+            self.play(FadeOut(self.cap, shift=0.15 * UP), run_time=0.4)
+            self.play(FadeIn(new, shift=0.15 * DOWN), run_time=0.5)
         self.cap = new
 
     def play(self, *args, **kwargs):
@@ -180,7 +212,7 @@ class Explainer(LayoutGuard, Scene):
 
     def place_sin(self, m):
         q = self.Q()
-        m.move_to([q[0] + 0.12 + m.width / 2, self.O()[1] + 0.4, 0])
+        m.move_to([q[0] + 0.08 + m.width / 2, self.O()[1] + 0.3, 0])
 
     def place_outside(self, m, a, b):
         m.move_to((a + b) / 2 + (0.15 + support(m, self.u())) * self.u())
@@ -215,17 +247,37 @@ class Explainer(LayoutGuard, Scene):
                       Line(b, c, color=C_SIN, stroke_width=9),
                       Line(a, c, color=C_ONE, stroke_width=9))
 
+    def geo_layout(self, which, drawing=None):
+        """Point the layout-specific rule names at the figure for the current layout only."""
+        fig = VGroup(self.x_axis, self.y_axis, self.circle)
+        none = VGroup()
+        self.geo_track(figure_home=fig if which == "home" else none,
+                       figure_wide=fig if which == "wide" else none)
+        if drawing is not None:
+            self._geo_drawing = drawing
+        if getattr(self, "_geo_drawing", None) is not None:
+            self.geo_track(drawing_home=self._geo_drawing if which == "home" else none,
+                           drawing_wide=self._geo_drawing if which == "wide" else none)
+
     # --- beats ---------------------------------------------------------------------------
     def beat_circle(self):
         """Beat 1: a circle of radius 1, and a point that can be anywhere on it."""
         self.x_axis = always_redraw(lambda: Line(
-            self.O() + LEFT * (self.R() + 0.1), self.O() + RIGHT * self.R() * self.XR.get_value(),
-            color=C_SCAFFOLD, stroke_width=2))
+            self.O() + LEFT * self.R() * self.XR.get_value(),
+            self.O() + RIGHT * self.R() * self.XR.get_value(), color=C_SCAFFOLD, stroke_width=2))
         self.y_axis = always_redraw(lambda: Line(
-            self.O() + DOWN * (self.R() + 0.1), self.O() + UP * self.R() * self.YU.get_value(),
-            color=C_SCAFFOLD, stroke_width=2))
+            self.O() + DOWN * self.R() * self.YU.get_value(),
+            self.O() + UP * self.R() * self.YU.get_value(), color=C_SCAFFOLD, stroke_width=2))
         self.circle = always_redraw(lambda: Circle(radius=self.R(), color=C_SCAFFOLD,
                                                    stroke_width=3).move_to(self.O()))
+        self.geo_track(circle=self.circle, x_axis=self.x_axis, y_axis=self.y_axis)
+        self.geo_rule(concentric("circle", "x_axis", "y_axis"),
+                      symmetric("x_axis", about="circle", axis="x"),
+                      symmetric("y_axis", about="circle", axis="y"),
+                      within_margin("figure_home", pct=7), centered_in("figure_home", region=HOME_REGION),
+                      within_margin("figure_wide", pct=7), centered_in("figure_wide", region=WIDE_REGION),
+                      within_margin("drawing_home", pct=7), within_margin("drawing_wide", pct=7))
+        self.geo_layout("home")
         self.radius = always_redraw(lambda: Line(self.O(), self.P(), color=C_ONE, stroke_width=4))
         self.dot = always_redraw(lambda: Dot(self.P(), radius=0.08, color=C_ONE).set_z_index(5))
         self.one = label("1", C_ONE)
@@ -285,10 +337,16 @@ class Explainer(LayoutGuard, Scene):
         self.coords.add_updater(lambda m: m.next_to(self.P(), UR, buff=0.12))
         self.coords.update()
         c = self.coords
-        self.play(FadeIn(VGroup(c[0], c[2], c[4])),
-                  TransformFromCopy(self.cos_lbl, c[1]), TransformFromCopy(self.sin_lbl, c[3]),
-                  run_time=1.5)
-        self.remove(*c)
+        # Rigid copies of the two labels travel into place (TransformFromCopy morphed them point by
+        # point: doubled, smeared glyphs mid-way); the brackets arrive once they have landed.
+        cos_c = self.cos_lbl.copy().clear_updaters()
+        sin_c = self.sin_lbl.copy().clear_updaters()
+        # rush_from: they leave their originals at once (a slow start reads as a doubled label)
+        self.play(cos_c.animate.move_to(c[1]), sin_c.animate.move_to(c[3]), run_time=1.1,
+                  rate_func=rush_from)
+        brackets = VGroup(c[0], c[2], c[4])
+        self.play(FadeIn(brackets), run_time=0.4)
+        self.remove(cos_c, sin_c, brackets)
         self.add(c)
         self.wait(1.5)
 
@@ -337,8 +395,8 @@ class Explainer(LayoutGuard, Scene):
     def beat_tangent_line(self):
         """Beat 7: the tangent line touches the circle at the point, at a right angle."""
         self.caption("Four more, on one line")
-        self.play(FadeOut(self.coords), self.XR.animate.set_value(2.05),
-                  self.YU.animate.set_value(1.35), run_time=1)
+        self.play(FadeOut(self.coords), self.XR.animate.set_value(XR_TAN),
+                  self.YU.animate.set_value(YU_TAN), run_time=1)
         self.tangent = always_redraw(lambda: Line(self.F() - 0.35 * self.t(),
                                                   self.E() + 0.35 * self.t(),
                                                   color=C_SCAFFOLD, stroke_width=3))
@@ -392,12 +450,22 @@ class Explainer(LayoutGuard, Scene):
         self.csc_lbl.add_updater(lambda m: self.place_csc(m))
         self.csc_lbl.update()
         self.play(FadeIn(self.csc_lbl))
+        self.geo_layout("home", drawing=VGroup(
+            self.x_axis, self.y_axis, self.circle, self.radius, self.dot, self.arc, self.tangent,
+            self.mark, self.cos_seg, self.sin_seg, self.tan_seg, self.cot_seg, self.csc_seg,
+            self.sec_dim, self.one, self.theta_lbl, self.cos_lbl, self.sin_lbl, self.tan_lbl,
+            self.sec_lbl, self.cot_lbl, self.csc_lbl))
         self.wait(1.5)
 
     def flash_copy(self, seg):
         """A fresh white line over a segment (or the bar of the sec dimension), for a flash."""
         line = seg[1] if isinstance(seg, VGroup) and len(seg) == 3 else seg
         return Line(line.get_start(), line.get_end(), color=WHITE, stroke_width=10)
+
+    def side_flash(self, side):
+        """Highlight one side of a triangle copy without moving it (Indicate would stretch it)."""
+        flash = Line(side.get_start(), side.get_end(), color=WHITE, stroke_width=12).set_z_index(3)
+        return ShowPassingFlash(flash, time_width=0.6)
 
     def panel_row(self, row, y, eq_x):
         row.shift(RIGHT * (eq_x - row[1].get_x()) + UP * (y - row.get_y()))
@@ -422,14 +490,15 @@ class Explainer(LayoutGuard, Scene):
         self.play(FadeIn(tri))
         self.wait(0.5)
         axis = np.array([np.cos(th / 2), np.sin(th / 2), 0.0])
-        self.play(Rotate(tri, angle=PI, axis=axis, about_point=o), run_time=1.6)
+        # the flipped copy's sin side would run through the "sin θ" label: hide it meanwhile
+        self.play(Rotate(tri, angle=PI, axis=axis, about_point=o), FadeOut(self.sin_lbl), run_time=1.6)
         self.wait(0.6)
         self.caption("Stretch until", tex(r"\cos\theta"), "is 1")
         self.play(tri.animate.scale(1 / np.cos(th), about_point=o), run_time=1.6)
-        self.wait(0.8)
-        self.play(Write(self.rows[0]), Indicate(tri[2], color=C_SIN), run_time=1.3)
+        self.play(FadeIn(self.sin_lbl), run_time=0.8)
+        self.play(Write(self.rows[0]), self.side_flash(tri[2]), run_time=1.3)
         self.wait(0.6)
-        self.play(Write(self.rows[1]), Indicate(tri[3], color=C_ONE), run_time=1.3)
+        self.play(Write(self.rows[1]), self.side_flash(tri[3]), run_time=1.3)
         self.wait(1.5)
         self.play(FadeOut(tri))
 
@@ -448,9 +517,9 @@ class Explainer(LayoutGuard, Scene):
         self.caption("Stretch until", tex(r"\sin\theta"), "is 1")
         self.play(tri.animate.scale(1 / np.sin(th), about_point=o), run_time=1.6)
         self.wait(0.8)
-        self.play(Write(self.rows[2]), Indicate(tri[1], color=C_COS), run_time=1.3)
+        self.play(Write(self.rows[2]), self.side_flash(tri[1]), run_time=1.3)
         self.wait(0.6)
-        self.play(Write(self.rows[3]), Indicate(tri[3], color=C_ONE), run_time=1.3)
+        self.play(Write(self.rows[3]), self.side_flash(tri[3]), run_time=1.3)
         self.wait(1.5)
         self.play(FadeOut(tri))
 
@@ -459,9 +528,11 @@ class Explainer(LayoutGuard, Scene):
         self.labels = [self.one, self.theta_lbl, self.cos_lbl, self.sin_lbl, self.tan_lbl,
                        self.sec_lbl, self.cot_lbl, self.csc_lbl]
         panel = VGroup(self.row1, *self.rows)
+        self.cap_x = RD_X
         self.caption("Toward 90°")
         self.play(FadeOut(*self.labels), FadeOut(panel), run_time=0.8)
-        self.zoom(WIDE, xr=6.0, yu=3.4)
+        self.geo_layout("wide")
+        self.zoom(WIDE, xr=XR_WIDE, yu=YU_WIDE)
 
         def rd(name, fn, col):
             return self.readout(name, fn, col, READOUT_SIZE)
@@ -476,9 +547,9 @@ class Explainer(LayoutGuard, Scene):
         )
         col_gap = max(g.width for g in grid) + 0.45
         for i, g in enumerate(grid):
-            g.move_to([PANEL_X + (i % 2) * col_gap + g.width / 2, 1.35 - (i // 2) * 0.7, 0])
+            g.move_to([RD_X + (i % 2) * col_gap + g.width / 2, 1.8 - (i // 2) * 0.55, 0])
         theta_row = self.readout(r"\theta", lambda: th() / DEGREES, C_ONE, READOUT_SIZE, 0, r"^\circ")
-        theta_row.move_to([PANEL_X + theta_row.width / 2, 2.1, 0])
+        theta_row.move_to([RD_X + theta_row.width / 2, 2.38, 0])
         readouts = VGroup(theta_row, grid)
         self.play(FadeIn(readouts))
         self.wait(0.5)
@@ -495,7 +566,9 @@ class Explainer(LayoutGuard, Scene):
         for row in [theta_row, *grid]:
             row[1].clear_updaters()
         self.play(FadeOut(readouts), run_time=0.8)
-        self.zoom(HOME, xr=2.05, yu=1.35)
+        self.geo_layout("home")
+        self.zoom(HOME, xr=XR_TAN, yu=YU_TAN)
+        self.cap_x = PANEL_X
         self.panel = panel
 
     def beat_recap(self):

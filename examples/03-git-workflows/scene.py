@@ -2,7 +2,7 @@
 merge joins histories with a two-parent commit, rebase replays commits as new copies, a person
 resolves conflicts, and teams reach a protected main only through reviewed pull requests.
 
-Render: "$SKILL_DIR/scripts/render.sh" preview scene.py Explainer
+Render: "$SKILL_DIR/scripts/render-in-container.sh" JOB_DIR   (job.json: {"scene": "Explainer"})
 """
 
 from manim import *
@@ -10,8 +10,26 @@ from manim import *
 try:  # layout checker; on PYTHONPATH when rendered with render.sh
     from manim_qa import LayoutGuard
 except ImportError:  # keeps the file renderable without the skill
+    print("LAYOUT-GUARD unavailable: manim_qa not importable; layout checks are off", flush=True)
+
     class LayoutGuard:
         pass
+
+try:  # measured geometry checker (render image)
+    from geometry_qa import GeometryGuard, centered_in, concentric, symmetric, within_margin
+except ImportError:
+    print("GEOMETRY-GUARD unavailable: geometry_qa not importable; geometry checks are off", flush=True)
+
+    class GeometryGuard:
+        def geo_track(self, **_):
+            return self
+
+        def geo_rule(self, *_):
+            return self
+
+    def _rule(*_, **__):
+        return None
+    centered_in = concentric = symmetric = within_margin = _rule
 
 # --- style (references/style-guide.md) -----------------------------------------------
 config.background_color = "#0F1117"
@@ -32,6 +50,8 @@ C_GOOD = GREEN      # resolved, approved (always paired with a word)
 C_MUTED = GREY_B    # captions' secondary text, scaffolding
 C_EDGE = GREY_B     # parent arrows
 
+MARGIN_X = 1.15          # side margin, about 8 % of the 14.22-unit frame width
+EDGE = np.array([MARGIN_X, 0.65, 0.0])   # title and command chip: 8 % from the sides and top
 TITLE_SIZE = 40
 CAPTION_SIZE = 30
 LABEL_SIZE = 28
@@ -43,8 +63,8 @@ MAIN_Y, FEAT_Y = 0.75, -1.05
 R = 0.38            # commit radius
 TAG_H = 0.42
 TAG_STEP = 0.5      # distance between stacked tags
-X = {"c1": -5.4, "c2": -3.9, "c3": -2.4, "f1": -0.9, "f2": 0.6, "c4": 2.1,
-     "m": 3.6, "f1r": 3.6, "f2r": 5.1}
+X = {"c1": -5.25, "c2": -3.75, "c3": -2.25, "f1": -0.75, "f2": 0.75, "c4": 2.25,
+     "m": 3.75, "f1r": 3.3, "f2r": 4.8, "f1s": 3.75, "f2s": 5.25}   # final line: -5.25 .. 5.25
 
 
 def v(x, y):
@@ -110,9 +130,9 @@ def doc_card():
     return VGroup(body, name, lines)
 
 
-def code_card(header, markup, color):
+def code_card(header, markup, color, width=None):
     code = code_text(markup).set_z_index(2)
-    box = RoundedRectangle(corner_radius=0.12, width=code.width + 0.6, height=code.height + 0.5,
+    box = RoundedRectangle(corner_radius=0.12, width=max(code.width + 0.6, width or 0), height=code.height + 0.5,
                            stroke_color=color, stroke_width=3).set_fill(CARD_BG, opacity=1)
     code.move_to(box)
     head = Text(header, font_size=SMALL_SIZE, color=color).next_to(box, UP, buff=0.15, aligned_edge=LEFT)
@@ -143,9 +163,30 @@ def flow_box(label, color, width=2.6, height=1.0):
     return VGroup(rect, Text(label, font_size=LABEL_SIZE).move_to(rect))
 
 
-class Explainer(LayoutGuard, Scene):
+class Explainer(GeometryGuard, LayoutGuard, Scene):
     def construct(self):
         self.title = self.caption = self.cmd = None
+        self.graph = VGroup()       # every commit, arrow and tag of chapters 1-4 (added as created)
+        off = VGroup()
+        self.geo_track(graph=self.graph, forked=off, history=off, merge_commit=off, cards=off,
+                       options=off, protected=off, pipeline=off, policies=off, recap=off)
+        self.geo_rule(
+            centered_in("titlecard", "frame"),
+            within_margin("title", 7), within_margin("chip", 7), within_margin("caption", 7),
+            within_margin("card", 7),
+            within_margin("graph", 7),                                    # chapters 1-4
+            symmetric("forked", about=(0, 0), axis="x"),                  # two-lane graph after the rebase
+            symmetric("history", about=(0, 0), axis="x"),                 # the straightened line
+            symmetric("main_tag", about="merge_commit", axis="x"),        # tags stacked on their commit
+            symmetric("head_tag", about="merge_commit", axis="x"),
+            concentric("merge_ring", "merge_id"),                         # id centred in its commit
+            symmetric("cards", about=(0, 0), axis="x"), within_margin("cards", 7),
+            symmetric("options", about=(0, 0), axis="x"), within_margin("options", 7),
+            symmetric("protected", about=(0, 0), axis="x"), within_margin("protected", 7),
+            symmetric("pipeline", about=(0, 0), axis="x"), within_margin("pipeline", 7),
+            symmetric("policies", about=(0, 0), axis="x"), within_margin("policies", 7),
+            symmetric("recap", about=(0, 0), axis="x"),
+        )
         self.beat_title_card()
         self.beat_commits()
         self.beat_branches()
@@ -174,15 +215,17 @@ class Explainer(LayoutGuard, Scene):
         parts = [Text(name, font_size=TITLE_SIZE)]
         if num:
             parts.insert(0, Text(num, font_size=TITLE_SIZE, color=C_MUTED))
-        new = VGroup(*parts).arrange(RIGHT, buff=0.3).to_corner(UL, buff=0.7)
+        new = VGroup(*parts).arrange(RIGHT, buff=0.3).to_corner(UL, buff=EDGE)
         anims = self.swap(self.title, new, 0.15 * UP)
         self.title = new
+        self.geo_track(title=new if new is not None else VGroup())
         return anims
 
     def caption_to(self, text, color=WHITE):
         new = Text(text, font_size=CAPTION_SIZE, color=color).to_edge(DOWN, buff=0.6) if text else None
         anims = self.swap(self.caption, new, 0.15 * UP)
         self.caption = new
+        self.geo_track(caption=new if new is not None else VGroup())
         return anims
 
     def cmd_to(self, text):
@@ -191,9 +234,10 @@ class Explainer(LayoutGuard, Scene):
             t = Text("$ " + text, font=MONO, font_size=CODE_SIZE, color=C_MUTED)
             box = RoundedRectangle(corner_radius=0.1, width=t.width + 0.4, height=0.6,
                                    stroke_color=DARK_GREY, stroke_width=2).set_fill(CARD_BG, opacity=1)
-            chip = VGroup(box, t.move_to(box)).to_corner(UR, buff=0.7)
+            chip = VGroup(box, t.move_to(box)).to_corner(UR, buff=EDGE)
         anims = self.swap(self.cmd, chip)
         self.cmd = chip
+        self.geo_track(chip=chip if chip is not None else VGroup())
         return anims
 
     @staticmethod
@@ -203,6 +247,13 @@ class Explainer(LayoutGuard, Scene):
         start = mob.get_center()
         path = CubicBezier(start, start + np.array(o1), np.array(end) + np.array(o2), np.array(end))
         return MoveAlongPath(mob, path, **kwargs)
+
+    def snapshot(self, parts, node, run_time=1.3):
+        """A text-free copy of the file card shrinks into the commit's slot, then the commit fades
+        in (FadeTransform stretched the id over "app.py" mid-way)."""
+        snap = parts.copy()
+        self.play(snap.animate.scale(0.35).move_to(node), run_time=0.8)
+        self.play(AnimationGroup(FadeOut(snap), FadeIn(node), lag_ratio=1.0), run_time=run_time - 0.8)
 
     def clear_stage(self, run_time=1.0):
         if self.mobjects:
@@ -217,18 +268,21 @@ class Explainer(LayoutGuard, Scene):
         VGroup(t, s).arrange(DOWN, buff=0.35)
         self.play(FadeIn(t, shift=0.3 * UP), run_time=1.0)
         self.play(FadeIn(s, shift=0.2 * UP), run_time=0.8)
+        self.geo_track(titlecard=VGroup(t, s))      # measured once both lines are up
         self.wait(1.5)
         self.play(FadeOut(t), FadeOut(s), run_time=0.8)
 
     def beat_commits(self):
         """Beats 2-3: a commit is a snapshot that points to its parent; a branch is a label."""
         card = doc_card().move_to([0, -1.35, 0])
+        self.geo_track(card=card)
         lines = card[2]
         self.play(*self.title_to("1", "Commits"), FadeIn(card, shift=0.3 * UP), run_time=1.0)
         self.play(*self.caption_to("a commit saves a snapshot of your files"),
                   *self.cmd_to("git commit"), run_time=0.8)
         c1 = commit_node("a1f", X["c1"], MAIN_Y, C_MAIN)
-        self.play(FadeTransform(card.copy(), c1), run_time=1.3)
+        self.graph.add(c1)
+        self.snapshot(VGroup(card[0], card[2]), c1)
         self.wait(1.0)
 
         # an edit (yellow = changed since the last snapshot), then the second snapshot
@@ -236,14 +290,18 @@ class Explainer(LayoutGuard, Scene):
         self.play(Transform(l1, Line(l1.get_start(), l1.get_start() + 1.3 * RIGHT,
                                      stroke_width=6, color=C_FOCUS)), run_time=0.8)
         c2 = commit_node("3c9", X["c2"], MAIN_Y, C_MAIN)
-        self.play(FadeTransform(card.copy(), c2), run_time=1.3)
+        self.graph.add(c2)
+        self.snapshot(VGroup(card[0], card[2]), c2)
         self.play(l1.animate.set_color(C_MUTED), run_time=0.4)
         a21 = parent_arrow(c2, c1)
+        self.graph.add(a21)
         self.play(GrowArrow(a21), *self.caption_to("each commit points to its parent"), run_time=1.0)
-        self.play(Indicate(a21, color=C_FOCUS, scale_factor=1.3), run_time=1.0)
+        self.play(ShowPassingFlash(Line(a21.get_start(), a21.get_end()).set_stroke(C_FOCUS, width=8),
+                                   time_width=0.6), run_time=1.0)
         self.wait(1.0)
 
         main = branch_tag("main", C_MAIN).move_to(slot(c2, UP))
+        self.graph.add(main)
         self.play(FadeIn(main, shift=0.3 * DOWN),
                   *self.caption_to("a branch is a label on a commit"), run_time=1.0)
         self.wait(1.2)
@@ -252,8 +310,10 @@ class Explainer(LayoutGuard, Scene):
         new_line.next_to(lines, DOWN, buff=0.27, aligned_edge=LEFT)
         self.play(Create(new_line), run_time=0.8)
         c3 = commit_node("7d2", X["c3"], MAIN_Y, C_MAIN)
-        self.play(FadeTransform(VGroup(card, new_line).copy(), c3), run_time=1.3)
+        self.graph.add(c3)
+        self.snapshot(VGroup(card[0], card[2], new_line), c3)
         a32 = parent_arrow(c3, c2)
+        self.graph.add(a32)
         self.play(GrowArrow(a32), new_line.animate.set_color(C_MUTED), run_time=0.6)
         self.play(main.animate.move_to(slot(c3, UP)),
                   *self.caption_to("commit again: the label moves along"), run_time=1.0)
@@ -266,10 +326,12 @@ class Explainer(LayoutGuard, Scene):
         """Beats 4-6: HEAD, a new branch is a new label, only the checked-out branch moves."""
         c3, main = self.c3, self.main
         head = head_tag().move_to(slot(c3, UP, 1))
+        self.graph.add(head)
         self.play(*self.title_to("2", "Branches"), FadeIn(head, shift=0.3 * DOWN), *self.cmd_to(None),
                   *self.caption_to("HEAD marks the branch you are on"), run_time=1.0)
         self.wait(1.2)
         feat = branch_tag("feature", C_FEAT).move_to(slot(c3, DOWN))
+        self.graph.add(feat)
         self.play(FadeIn(feat, shift=0.3 * UP), *self.cmd_to("git switch -c feature"),
                   *self.caption_to("a new branch: a second label, same commit"), run_time=1.0)
         self.wait(0.6)
@@ -279,6 +341,7 @@ class Explainer(LayoutGuard, Scene):
 
         f1 = commit_node("e5b", X["f1"], FEAT_Y, C_FEAT)
         af1 = parent_arrow(f1, c3)
+        self.graph.add(f1, af1)
         # the tags travel below the lane, then the parent arrow is drawn (it would cross them)
         self.play(FadeIn(f1, scale=0.6), *self.cmd_to("git commit"),
                   self.glide(feat, slot(f1, DOWN), v(-0.5, 0), v(-1.5, -0.5)),
@@ -287,13 +350,17 @@ class Explainer(LayoutGuard, Scene):
         self.play(GrowArrow(af1), run_time=0.6)
         f2 = commit_node("9a0", X["f2"], FEAT_Y, C_FEAT)
         af2 = parent_arrow(f2, f1)
+        self.graph.add(f2, af2)
         self.play(FadeIn(f2, scale=0.6), GrowArrow(af2), run_time=0.9)
         self.play(feat.animate.move_to(slot(f2, DOWN)), head.animate.move_to(slot(f2, DOWN, 1)), run_time=0.8)
-        self.play(Circumscribe(main, color=C_FOCUS), run_time=1.0)
+        stay = SurroundingRectangle(main, color=C_FOCUS, buff=0.08, corner_radius=0.1)
+        self.play(Create(stay), run_time=0.5)
+        self.play(FadeOut(stay), run_time=0.5)
         self.wait(0.6)
 
         c4 = commit_node("c48", X["c4"], MAIN_Y, C_MAIN)
         a43 = parent_arrow(c4, c3)
+        self.graph.add(c4, a43)
         self.play(FadeIn(c4, scale=0.6), GrowArrow(a43), *self.cmd_to(None),
                   *self.caption_to("meanwhile, a teammate's work lands on main"), run_time=1.0)
         self.play(main.animate.move_to(slot(c4, UP)), run_time=1.0)
@@ -314,12 +381,14 @@ class Explainer(LayoutGuard, Scene):
         m = commit_node("f13", X["m"], MAIN_Y, C_MAIN)
         am4 = parent_arrow(m, c4, C_FOCUS)
         amf = parent_arrow(m, f2, C_FOCUS)
+        self.graph.add(m, am4, amf)
         self.play(FadeIn(m, scale=0.6), *self.cmd_to("git merge feature"),
                   *self.caption_to("a merge commit has two parents"), run_time=1.0)
         self.play(GrowArrow(am4), GrowArrow(amf), run_time=1.0)
         self.wait(1.0)
         self.play(main.animate.move_to(slot(m, UP)), head.animate.move_to(slot(m, UP, 1)),
                   am4.animate.set_color(C_EDGE), amf.animate.set_color(C_EDGE), run_time=1.0)
+        self.geo_track(merge_commit=m, merge_ring=m[0], merge_id=m[1], main_tag=main, head_tag=head)
         self.play(*self.caption_to("both histories kept, joined by one commit"), run_time=0.8)
         self.wait(1.5)
         self.m, self.am4, self.amf = m, am4, amf
@@ -328,6 +397,7 @@ class Explainer(LayoutGuard, Scene):
         """Beats 8-10: rebase replays copies; fast-forward; the golden rule."""
         c3, c4, f1, f2 = self.c3, self.c4, self.f1, self.f2
         main, feat, head = self.main, self.feat, self.head
+        self.geo_track(merge_commit=VGroup(), merge_ring=VGroup(), merge_id=VGroup())
         self.play(*self.title_to("4", "Rebase"), *self.cmd_to(None),
                   *self.caption_to("rewind: rebase instead, for a straight history"),
                   FadeOut(self.m), FadeOut(self.am4), FadeOut(self.amf),
@@ -342,18 +412,34 @@ class Explainer(LayoutGuard, Scene):
         af1r = parent_arrow(f1r, c4)
         f2r = commit_node("6d7", X["f2r"], FEAT_Y, C_FEAT)
         af2r = parent_arrow(f2r, f1r)
-        self.play(TransformFromCopy(f1, f1r, path_arc=0.5 * PI), run_time=1.3)
-        self.play(TransformFromCopy(f2, f2r, path_arc=0.5 * PI), run_time=1.2)
+        self.graph.add(f1r, f2r, af1r, af2r)
+        hop1, hop2 = f1.copy(), f2.copy()          # still showing the old ids e5b, 9a0
+        self.add(hop1, hop2)
+        # .animate(path_arc<0) bends upward here (over the lane, away from the tags below)
+        self.play(hop1.animate(path_arc=-0.55 * PI).move_to(f1r),
+                  hop2.animate(path_arc=-0.55 * PI).move_to(f2r), run_time=1.5)
+        old_ids = VGroup(hop1[1], hop2[1])
+        self.remove(hop1, hop2)
+        self.add(f1r[0], f2r[0], old_ids)           # same pixels: circles now belong to the copies
         self.play(GrowArrow(af1r), GrowArrow(af2r), run_time=0.7)
         self.play(feat.animate.move_to(slot(f2r, DOWN)), head.animate.move_to(slot(f2r, DOWN, 1)), run_time=1.0)
         ghosts = VGroup(f1, f2, self.af1, self.af2)
+        new_ids = VGroup(f1r[1], f2r[1])
         self.play(ghosts.animate.set_opacity(0.25),
-                  *self.caption_to("new copies, new ids: the originals are left behind"), run_time=1.0)
-        self.wait(2.0)
+                  AnimationGroup(FadeOut(old_ids), FadeIn(new_ids), lag_ratio=1.0),
+                  *self.caption_to("new copies, new ids: the originals are left behind"), run_time=1.2)
+        self.remove(f1r[0], f2r[0], new_ids)
+        self.add(f1r, f2r)
+        self.geo_track(forked=self.graph)       # the full two-lane graph: centred left-right
+        self.wait(2.3)
 
         # fast-forward: main has nothing new, so its label just slides
-        self.play(*self.cmd_to("git switch main"),
-                  self.glide(head, slot(c4, UP, 1), v(-3.5, -0.5), v(-3.0, 1.0)), run_time=1.4)
+        # git switch main: HEAD hops (out downwards, in from above main). After the rebase the
+        # graph is one connected barrier, so a glide would cross an arrow, or sweep around the
+        # graph's right end into the frame margin.
+        self.play(*self.cmd_to("git switch main"), FadeOut(head, shift=0.3 * DOWN), run_time=0.7)
+        head.move_to(slot(c4, UP, 1))
+        self.play(FadeIn(head, shift=0.3 * DOWN), run_time=0.7)
         self.play(*self.cmd_to("git merge feature"), run_time=0.6)
         self.play(self.glide(main, slot(f2r, UP), v(2.0, 0), v(0, 1.2)),
                   self.glide(head, slot(f2r, UP, 1), v(2.0, 0), v(0, 1.2)),
@@ -361,14 +447,17 @@ class Explainer(LayoutGuard, Scene):
         self.wait(1.5)
 
         # straighten: one line of history
-        f1r_t = f1r.copy().move_to([X["f1r"], MAIN_Y, 0])
-        f2r_t = f2r.copy().move_to([X["f2r"], MAIN_Y, 0])
+        self.geo_track(forked=VGroup())
+        f1r_t = f1r.copy().move_to([X["f1s"], MAIN_Y, 0])
+        f2r_t = f2r.copy().move_to([X["f2s"], MAIN_Y, 0])
         self.play(FadeOut(ghosts), f1r.animate.move_to(f1r_t), f2r.animate.move_to(f2r_t),
                   Transform(af1r, parent_arrow(f1r_t, c4)),
                   Transform(af2r, parent_arrow(f2r_t, f1r_t)),
                   main.animate.move_to(slot(f2r_t, UP)), head.animate.move_to(slot(f2r_t, UP, 1)),
                   feat.animate.move_to(slot(f2r_t, DOWN)),
                   *self.caption_to("one straight line of history"), run_time=1.8)
+        self.geo_track(history=VGroup(self.c1, self.c2, c3, c4, f1r, f2r,
+                                      self.a21, self.a32, self.a43, af1r, af2r))
         self.wait(1.5)
         self.play(*self.cmd_to(None),
                   *self.caption_to("rule: never rebase commits others already have", C_BAD), run_time=0.8)
@@ -378,8 +467,12 @@ class Explainer(LayoutGuard, Scene):
         """Beat 11: both branches changed the same line."""
         self.clear_stage()
         base = code_card("before branching", "getUser(id)", C_MUTED).move_to([0, 1.3, 0])
-        mcard = code_card("main", span("fetchUser", C_MAIN) + "(id)", C_MAIN).move_to([-3.4, -0.9, 0])
-        fcard = code_card("feature", "getUser(id" + span(", cache", C_FEAT) + ")", C_FEAT).move_to([3.4, -0.9, 0])
+        def cards(w=None):
+            return (code_card("main", span("fetchUser", C_MAIN) + "(id)", C_MAIN, w).move_to([-3.4, -0.9, 0]),
+                    code_card("feature", "getUser(id" + span(", cache", C_FEAT) + ")", C_FEAT, w)
+                    .move_to([3.4, -0.9, 0]))
+        mcard, fcard = cards()
+        mcard, fcard = cards(max(mcard[1].width, fcard[1].width))
         mnote = Text("renamed the function", font_size=SMALL_SIZE, color=C_MUTED).next_to(mcard, DOWN, buff=0.2)
         fnote = Text("added caching", font_size=SMALL_SIZE, color=C_MUTED).next_to(fcard, DOWN, buff=0.2)
         d1 = DashedLine(base[1].get_bottom(), mcard[0].get_top(), buff=0.15, color=C_EDGE)
@@ -389,6 +482,7 @@ class Explainer(LayoutGuard, Scene):
         self.wait(1.0)
         self.play(Create(d1), FadeIn(mcard, shift=0.2 * DOWN), FadeIn(mnote), run_time=1.0)
         self.play(Create(d2), FadeIn(fcard, shift=0.2 * DOWN), FadeIn(fnote), run_time=1.0)
+        self.geo_track(cards=VGroup(base, mcard, fcard, mnote, fnote, d1, d2))
         self.play(*self.caption_to("both branches changed the same line"), run_time=0.8)
         self.wait(1.5)
         self.cards = (base, mcard, fcard, mnote, fnote, d1, d2)
@@ -412,9 +506,9 @@ class Explainer(LayoutGuard, Scene):
         fhead.next_to(fbox, UP, buff=0.15, aligned_edge=LEFT)
         ftag = branch_tag("CONFLICT", C_BAD, font_size=SMALL_SIZE).next_to(fhead, RIGHT, buff=0.3)
         ours = VGroup(Text("ours", font_size=LABEL_SIZE, color=C_MAIN),
-                      Text("(main)", font_size=SMALL_SIZE, color=C_MUTED)).arrange(RIGHT, buff=0.15)
+                      Text("(main)", font_size=SMALL_SIZE, color=C_MUTED)).arrange(DOWN, buff=0.06, aligned_edge=LEFT)
         theirs = VGroup(Text("theirs", font_size=LABEL_SIZE, color=C_FEAT),
-                        Text("(feature)", font_size=SMALL_SIZE, color=C_MUTED)).arrange(RIGHT, buff=0.15)
+                        Text("(feature)", font_size=SMALL_SIZE, color=C_MUTED)).arrange(DOWN, buff=0.06, aligned_edge=LEFT)
         ours.next_to(fbox, RIGHT, buff=0.3).match_y(l_ours)
         theirs.next_to(fbox, RIGHT, buff=0.3).match_y(l_theirs)
         conflict = VGroup(fbox, body, fhead, ftag, ours, theirs)
@@ -431,8 +525,6 @@ class Explainer(LayoutGuard, Scene):
         self.wait(2.0)
 
         # three ways out
-        self.play(conflict.animate.to_edge(LEFT, buff=0.7),
-                  *self.caption_to("a person decides how to resolve it"), run_time=1.0)
         specs = [
             ("keep ours", C_MAIN, "loses the caching", C_MUTED, span("fetchUser", C_MAIN) + "(id)"),
             ("keep theirs", C_FEAT, "loses the rename", C_MUTED, "getUser(id" + span(", cache", C_FEAT) + ")"),
@@ -449,15 +541,25 @@ class Explainer(LayoutGuard, Scene):
                                    stroke_color=DARK_GREY, stroke_width=2).set_fill(CARD_BG, opacity=1)
             code.move_to(box).align_to(box, LEFT).shift(0.25 * RIGHT)
             rows.add(VGroup(head, VGroup(box, code)).arrange(DOWN, buff=0.15, aligned_edge=LEFT))
-        rows.arrange(DOWN, buff=0.3, aligned_edge=LEFT).to_edge(RIGHT, buff=0.9)
-        rows.align_to(fhead, UP)
+        rows.arrange(DOWN, buff=0.3, aligned_edge=LEFT)
         check = check_mark().next_to(rows[2][0], RIGHT, buff=0.2)
+        frame = SurroundingRectangle(VGroup(rows[2], check), color=C_GOOD, buff=0.15, corner_radius=0.1)
+        options = VGroup(rows, check, frame)
+        # the conflicted file on the left, the options on the right: one pair, centred
+        gap = 0.6
+        total = conflict.width + gap + options.width
+        x_left = -total / 2
+        self.play(conflict.animate.set_x(x_left + conflict.width / 2),
+                  *self.caption_to("a person decides how to resolve it"), run_time=1.0)
+        options.shift((x_left + conflict.width + gap - options.get_left()[0]) * RIGHT)
+        options.shift((fhead.get_top()[1] - rows.get_top()[1]) * UP)
         for row in rows:
             self.play(FadeIn(row, shift=0.2 * LEFT), run_time=0.9)
             self.wait(1.2)
-        frame = SurroundingRectangle(rows[2], color=C_GOOD, buff=0.15, corner_radius=0.1)
         self.play(Create(frame), FadeIn(check, scale=0.5), run_time=0.8)
+        self.geo_track(options=VGroup(conflict, *rows, check, frame))
         self.wait(0.6)
+        self.geo_track(options=VGroup())        # the file shrinks next: the pair is no longer balanced
 
         # the file is fixed: commit to finish the merge
         resolved = code_text(specs[2][4]).set_z_index(2)
@@ -481,7 +583,13 @@ class Explainer(LayoutGuard, Scene):
         """Beat 15: main is protected; a direct push is rejected."""
         self.clear_stage()
         y = 0.9
-        p1, p2, p3 = (commit_node(c, x, y, C_MAIN) for c, x in (("b07", -2.0), ("5e1", -0.5), ("d92", 1.0)))
+        # p1..p3 on main, my commit 1.6 right of p3 on the lower lane with its tag below: choose
+        # p1's x so that the finished picture reaches equally far left and right of the centre
+        tag_w = branch_tag("feature", C_FEAT).width
+        a = (R - 4.6 - tag_w / 2) / 2
+        xs = (a, a + 1.5, a + 3.0)
+        x_mine = a + 4.6
+        p1, p2, p3 = (commit_node(c, x, y, C_MAIN) for c, x in zip(("b07", "5e1", "d92"), xs))
         e21, e32 = parent_arrow(p2, p1), parent_arrow(p3, p2)
         mtag = branch_tag("main", C_MAIN).move_to(slot(p3, UP))
         lock = padlock().next_to(mtag, RIGHT, buff=0.15)
@@ -491,18 +599,19 @@ class Explainer(LayoutGuard, Scene):
                   run_time=1.6)
         self.play(FadeIn(lock, scale=0.5), *self.caption_to("main is protected: no direct pushes"), run_time=1.0)
         self.wait(1.0)
-        mine = commit_node("4fa", 3.8, -1.2, C_FEAT)
+        mine = commit_node("4fa", x_mine + 1.2, -1.2, C_FEAT)
         self.play(FadeIn(mine, scale=0.6), *self.cmd_to("git push origin main"), run_time=0.8)
-        self.play(mine.animate.move_to([2.6, y, 0]), run_time=0.9)
-        cross = cross_mark().move_to([1.8, y, 0])
+        self.play(mine.animate.move_to([x_mine, y, 0]), run_time=0.9)
+        cross = cross_mark().move_to([(p3.get_right()[0] + x_mine - R) / 2, y, 0])
         self.play(FadeIn(cross, scale=1.5),
                   *self.caption_to("rejected: changes must be reviewed first", C_BAD), run_time=0.6)
         self.wait(0.8)
-        self.play(mine.animate.move_to([2.6, -1.2, 0]), FadeOut(cross), run_time=0.9)
+        self.play(mine.animate.move_to([x_mine, -1.2, 0]), FadeOut(cross), run_time=0.9)
         ftag = branch_tag("feature", C_FEAT).move_to(slot(mine, DOWN))
         emine = parent_arrow(mine, p3)
         self.play(FadeIn(ftag, shift=0.2 * UP), GrowArrow(emine), *self.cmd_to("git push origin feature"),
                   *self.caption_to("instead: push a branch, open a pull request"), run_time=1.0)
+        self.geo_track(protected=VGroup(p1, p2, p3, e21, e32, mtag, lock, mine, ftag, emine))
         self.wait(1.2)
 
     def beat_pull_request(self):
@@ -510,14 +619,16 @@ class Explainer(LayoutGuard, Scene):
         keep = [self.title]
         self.play(*[FadeOut(m) for m in self.mobjects if m not in keep], run_time=0.8)
         self.caption = self.cmd = None
-        boxes = VGroup(flow_box("pull request", C_FEAT), flow_box("CI tests", C_MUTED),
-                       flow_box("review", C_MUTED), flow_box("main", C_MAIN)).arrange(RIGHT, buff=0.6)
+        boxes = VGroup(*[flow_box(t, c, width=2.45) for t, c in (("pull request", C_FEAT), ("CI tests", C_MUTED),
+                                                                ("review", C_MUTED), ("main", C_MAIN))])
+        boxes.arrange(RIGHT, buff=0.6)
         boxes.move_to([0, 0.2, 0])
         arrows = VGroup(*[Arrow(a.get_right(), b.get_left(), buff=0.08, color=C_EDGE, stroke_width=3)
                           for a, b in zip(boxes, boxes[1:])])
         subs = VGroup(*[Text(s, font_size=SMALL_SIZE, color=C_MUTED).next_to(b, DOWN, buff=0.25)
                         for s, b in zip(["feature → main", "build + tests", "a teammate approves",
                                          "protected"], boxes)])
+        self.geo_track(pipeline=VGroup(boxes, arrows, subs))
         self.play(LaggedStart(*[AnimationGroup(FadeIn(b, shift=0.2 * RIGHT), FadeIn(s))
                                 for b, s in zip(boxes, subs)], lag_ratio=0.3),
                   LaggedStart(*[GrowArrow(a) for a in arrows], lag_ratio=0.3),
@@ -561,7 +672,7 @@ class Explainer(LayoutGuard, Scene):
             parts = [m1, m2, link(m2, m1)]
             if kind == "merge":
                 f1, f2 = node(cx, -0.35, yf, C_FEAT), node(cx, 0.4, yf, C_FEAT)
-                tip = node(cx, 1.2, ym, C_MAIN)
+                tip = node(cx, 1.05, ym, C_MAIN)
                 parts += [f1, f2, tip, link(f1, m2), link(f2, f1), link(tip, m2), link(tip, f2)]
             elif kind == "squash":
                 f1, f2 = node(cx, -0.35, yf, C_FEAT, True), node(cx, 0.4, yf, C_FEAT, True)
@@ -569,7 +680,7 @@ class Explainer(LayoutGuard, Scene):
                 parts += [f1, f2, link(f1, m2, True), link(f2, f1, True), tip, link(tip, m2),
                           link(f2, tip, dashed=True)]
             else:
-                f1, f2 = node(cx, 0.0, ym, C_FEAT), node(cx, 0.75, ym, C_FEAT)
+                f1, f2 = node(cx, 0.1, ym, C_FEAT), node(cx, 0.95, ym, C_FEAT)
                 tip = f2
                 parts += [f1, f2, link(f1, m2), link(f2, f1)]
             tag = branch_tag("main", C_MAIN, font_size=SMALL_SIZE)
@@ -580,16 +691,26 @@ class Explainer(LayoutGuard, Scene):
                  ("squash", "squash", "one commit per PR"),
                  ("rebase & merge", "rebase", "linear history")]
         cols = VGroup()
-        for cx, (title, kind, trait) in zip((-4.4, 0.0, 4.4), names):
-            graph = column(cx, kind)
-            head = Text(title, font_size=LABEL_SIZE).move_to([cx, 1.45, 0])
-            foot = Text(trait, font_size=SMALL_SIZE, color=C_MUTED).move_to([cx, -1.65, 0])
+        for title, kind, trait in names:
+            graph = column(0, kind)
+            graph.shift(-graph.get_center()[0] * RIGHT)              # centred under its title
+            head = Text(title, font_size=LABEL_SIZE).move_to([0, 1.45, 0])
+            foot = Text(trait, font_size=SMALL_SIZE, color=C_MUTED).move_to([0, -1.65, 0])
             cols.add(VGroup(head, graph, foot))
+        # the outer columns reach the same distance from the centre (8 % side margins), the
+        # middle one sits on it: a symmetric row
+        reach = config.frame_width / 2 - MARGIN_X
+        cols[0].shift((-reach + cols[0].width / 2) * RIGHT)
+        cols[2].shift((reach - cols[2].width / 2) * RIGHT)
+        for (_, kind, _), col in zip(names, cols):
+            self.geo_track(**{f"policy_{kind}": col[1]})
+            self.geo_rule(symmetric(f"policy_{kind}", about=(col[0].get_x(), 0), axis="x"))
         self.play(*self.caption_to("the team picks how pull requests land on main"), run_time=0.8)
         for col in cols:
             self.play(FadeIn(col[0], shift=0.2 * DOWN), FadeIn(col[1]), run_time=1.0)
             self.play(FadeIn(col[2], shift=0.2 * UP), run_time=0.6)
             self.wait(0.8)
+        self.geo_track(policies=cols)
         self.wait(1.5)
 
     def beat_recap(self):
@@ -604,6 +725,7 @@ class Explainer(LayoutGuard, Scene):
                  "conflict: " + g("a person decides"),
                  "main: " + g("only via reviewed pull requests")]
         recap = VGroup(*[MarkupText(s, font_size=36) for s in items])
+        self.geo_track(recap=recap)
         for i, line in enumerate(recap):   # ascender tops align; bounding boxes differ by descenders
             line.align_to(i * 0.85 * DOWN, UP).align_to(ORIGIN, LEFT)
         recap.move_to([0, -0.1, 0])

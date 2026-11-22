@@ -134,16 +134,17 @@ had only the skill: prompt, storyboard, final scene code, review log, inspection
 notes on the bugs found and fixed. Videos are not committed (on the nucbox they are in `out/`).
 Each example folder is also a job directory: `render-in-container.sh examples/<name> --quality final`.
 
-| Prompt | Narration | Previews | Final (1080p60) | Rubric |
+| Prompt | Narration | Final (1080p60) | Rubric | Geometry |
 |---|---|---|---|---|
-| unit circle and the six trig functions | silent | 3 | 138.9 s | 20/20 |
-| modern LLM weights and neurons | silent | 5 | 150.0 s | 19/20 |
-| git: commit, branch, merge, rebase, conflicts, teams | silent | 6 | 139.0 s | 20/20 |
-| Fourier series as epicycles | silent | 2 | 129.5 s | 20/20 |
-| gradient descent and backprop | Kokoro via manim-voiceover | 6 | 158.2 s | 20/20 |
+| unit circle and the six trig functions | silent | 138.9 s | 20/20 | PASS (9 rules) |
+| modern LLM weights and neurons | silent | 150.0 s | 19/20 | PASS (23 rules) |
+| git: commit, branch, merge, rebase, conflicts, teams | silent | 138.5 s | 19/20 | PASS (25 rules) |
+| Fourier series as epicycles | silent | 129.5 s | 20/20 | PASS (13 rules) |
+| gradient descent and backprop | Kokoro via manim-voiceover | 161.2 s | 20/20 | PASS (18 rules) |
 
-All five pass `qa_check.py`. Known small flaws and the lessons folded back into the skill are
-listed in `examples/README.md`.
+These are the container re-run (2026-11-22): every final rendered inside the container and
+passes the automated checks, including the measured geometry check. Iterations, bugs fixed and
+the first run's numbers are in `examples/README.md`.
 
 ## Development
 

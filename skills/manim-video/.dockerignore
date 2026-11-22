@@ -1,0 +1,6 @@
+# Build context is the skill directory; send only what the image needs.
+*
+!docker/Dockerfile
+!docker/requirements.lock
+!docker/manim_job.py
+!scripts/*.py

@@ -6,9 +6,11 @@ the full loop: storyboard, scene, 480p previews, frame inspection, rubric, fixes
 `scene.py`, `review.md` (iteration log and final report), `notes.md` (bugs found and fixed, plus
 feedback on the skill) and `stills/` (before/after pairs and the final contact sheet).
 
-Videos are not in git. Rebuild one with
-`skills/manim-video/scripts/render.sh final examples/<folder>/scene.py <Scene>`
-(the scene class is `Explainer` unless `scene.py` says otherwise).
+Videos are not in git. Each folder is also a job directory for the render container (it has a
+`job.json`): `skills/manim-video/scripts/render-in-container.sh examples/<folder> --quality final`
+writes `examples/<folder>/out/Explainer-final.mp4`. These five runs used the earlier render path
+(the official Manim image driven by `render.sh`); see "Container re-run" below for the same
+prompts run through the container route.
 
 | Folder | Prompt | Narration | Previews | Final | Rubric |
 |---|---|---|---|---|---|

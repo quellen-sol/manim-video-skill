@@ -1,0 +1,56 @@
+# Compose definition of the manim-video render job: the canonical render path.
+#
+# Use it through scripts/render-in-container.sh, which sets the variables below, gives every job a
+# unique project name, adds compose.gpu.yml only when the job asks for the GPU, and removes the
+# container afterwards. The equivalent manual run (CPU, silent job):
+#
+#   JOB_DIR=$PWD/jobs/demo HOST_UID=$(id -u) HOST_GID=$(id -g) \
+#     docker compose -p manim-demo -f docker/compose.yml run --rm -T manim
+#
+# Style follows the host's media-stack compose file (TZ/UMASK environment, bind mounts, GPU via
+# devices + group_add), but this is a run-to-completion job, not a daemon: no restart policy, no
+# published ports, no container_name (compose names each run container uniquely), and
+# network_mode instead of a project network, so a run leaves no network behind.
+name: manim-video
+
+services:
+  manim:
+    image: ${MANIM_IMAGE:-manim-video:local}
+    pull_policy: never              # local image only; build it, never pull a same-named one
+    build:
+      context: ..                   # the skill directory
+      dockerfile: docker/Dockerfile
+      args:
+        SOURCE_SHA: ${SOURCE_SHA:-unknown}
+    # Run as the caller so out/ belongs to them. The image refuses uid 0.
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    environment:
+      - TZ=Etc/UTC
+      - UMASK=002
+      # Passed through from the caller's environment by name; no value is stored here.
+      - KOKORO_API_KEY
+      # Optional defaults; job.json "narration.kokoro" takes precedence.
+      - KOKORO_BASE_URL
+      - KOKORO_MODEL
+      - KOKORO_VOICE
+    # The Kokoro server listens on the host; inside the container it is host.docker.internal.
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    # none for silent jobs (no network at all); bridge for narration or extra pip requirements.
+    network_mode: ${MANIM_NETWORK:-none}
+    volumes:
+      - type: bind                  # job sources: read-only
+        source: ${JOB_DIR:?set JOB_DIR to the absolute path of the job directory}
+        target: /job
+        read_only: true
+      - type: bind                  # the only writable path
+        source: ${JOB_DIR:?}/out
+        target: /job/out
+    read_only: true                 # root filesystem read-only; scratch space is /tmp
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    init: true                      # forwards Ctrl-C/SIGTERM to the render and reaps children

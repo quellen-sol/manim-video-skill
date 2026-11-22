@@ -9,6 +9,11 @@ The skill makes the agent work in a loop rather than in one shot: **plan** a sto
 them, plus headless checks), **judge** intuitiveness against a rubric, **fix** and repeat, and
 only then render the **final** 1080p60 file.
 
+Rendering runs in a **Docker image that holds the whole toolchain** (Manim, LaTeX, ffmpeg,
+manim-voiceover, the helpers). The agent writes a job directory (`scene.py`, `job.json`,
+assets), runs one wrapper, and gets back a video, stills to look at and a check report. A
+host-native install is kept only as a fallback for local testing.
+
 ## Layout
 
 ```
@@ -17,14 +22,21 @@ manim-video-skill/
 ├── install.sh                      symlinks the one canonical skill into agent skill dirs
 ├── skills/manim-video/             the skill (the only copy)
 │   ├── SKILL.md                    workflow and rules (spec-only frontmatter)
-│   ├── references/                 API cheatsheet, scene patterns, style guide, QA checklist,
-│   │                               intuition rubric, narration, troubleshooting, environment
-│   ├── scripts/                    check_env.sh, setup_env.sh, render.sh, frames.py, qa_check.py,
-│   │                               manim_qa.py (LayoutGuard), kokoro_service.py, narrate_mux.py,
-│   │                               narration_timeline.py, _env.sh, _ffbin.py, docker/Dockerfile
-│   └── templates/                  storyboard, review log, silent and narrated scenes, narration.json
+│   ├── docker/                     Dockerfile, requirements.in/.lock (hash-pinned), manim_job.py
+│   │                               (the in-container job runner), compose.yml, compose.gpu.yml
+│   ├── .dockerignore               the build context is the skill directory
+│   ├── references/                 container.md (job contract, GPU, benchmarks), API cheatsheet,
+│   │                               scene patterns, style guide, QA checklist, intuition rubric,
+│   │                               narration, troubleshooting, environment (host route)
+│   ├── scripts/                    render-in-container.sh (the renderer), check_env.sh,
+│   │                               setup_env.sh, render.sh (host route), frames.py, qa_check.py,
+│   │                               manim_qa.py (LayoutGuard), kokoro_service.py, narration_script.py,
+│   │                               narrate_mux.py, narration_timeline.py, _env.sh, _ffbin.py
+│   └── templates/                  job.json, storyboard, review log, silent and narrated scenes,
+│                                   narration.json
 ├── examples/                       the five test prompts run through the full loop
-└── tests/                          validate_skill.py, check_patterns.py, api_smoke.py
+└── tests/                          validate_skill.py, test_container.sh, check_patterns.py,
+                                    bench_gpu.sh, api_smoke.py, jobs/ (smoke, narrated, mux, bench)
 ```
 
 ## Install
@@ -33,9 +45,13 @@ manim-video-skill/
 git clone git@github.com:quellen-sol/manim-video-skill.git ~/dev/manim-video-skill
 cd ~/dev/manim-video-skill
 ./install.sh                                   # symlinks; --dry-run to preview, --uninstall to undo
-skills/manim-video/scripts/setup_env.sh        # user space: static ffmpeg + Docker image
-skills/manim-video/scripts/check_env.sh --tts  # read-only check, including a Kokoro test clip
+skills/manim-video/scripts/setup_env.sh        # builds the render image manim-video:local (~6 min)
+skills/manim-video/scripts/check_env.sh --tts  # read-only check (add --gpu, --host)
 ```
+
+The container route needs only Docker with the compose plugin and membership of the `docker`
+group. For the host route (fallback), `setup_env.sh --host` builds a venv from the same lock
+file; it needs system packages it cannot install and lists any that are missing.
 
 `install.sh` creates two symlinks to `skills/manim-video` and changes nothing else:
 
@@ -49,34 +65,52 @@ skills/manim-video/scripts/check_env.sh --tts  # read-only check, including a Ko
 `--openclaw` also links `~/.openclaw/skills/manim-video`, which is only needed for an OpenClaw
 that does not read `~/.agents/skills`.
 
-## Render recipe (what works without root)
-
-Manim Community cannot be pip-installed on this host without root: `manimpango` and `pycairo`
-publish no Linux wheels and need `libcairo2-dev`/`libpango1.0-dev` headers. The working,
-user-space recipe is:
-
-1. **Renderer:** the official image `manimcommunity/manim:v0.22.1` (Manim, Python 3.14, TeX Live),
-   extended by `scripts/docker/Dockerfile` into `manim-video:0.22.1` with manim-voiceover 0.4.0,
-   ffmpeg and sox. `render.sh` runs one `--rm` container per render as your uid, with
-   `--network none` for silent scenes.
-2. **Host helpers:** a static ffmpeg/ffprobe build in `~/.local/share/manim-video/bin` (the
-   system ffmpeg on this host is installed but broken: `liblapack.so.3` is missing), and the
-   system `python3` (stdlib only) for `frames.py`, `qa_check.py` and `narrate_mux.py`.
-3. **Narration:** `KokoroService` (manim-voiceover) POSTs to `$KOKORO_BASE_URL/audio/speech`
-   (default `http://127.0.0.1:8880/v1`, model `kokoro`, voice `af_heart`). For narrated scenes
-   `render.sh` maps the host's loopback to `host.docker.internal` inside the container and passes
-   `KOKORO_API_KEY` by name only. The fallback `narrate_mux.py` makes one WAV per beat, measures
-   it and muxes after rendering.
+## Rendering: the container route (default)
 
 ```bash
-SKILL_DIR=~/.agents/skills/manim-video
-"$SKILL_DIR/scripts/render.sh" preview scene.py Explainer      # 854x480 @ 15 fps
-python3 "$SKILL_DIR/scripts/qa_check.py" <video>                 # headless checks
-python3 "$SKILL_DIR/scripts/frames.py" <video> --beats --mid     # stills + contact sheets
-"$SKILL_DIR/scripts/render.sh" final scene.py Explainer        # 1920x1080 @ 60 fps
+R=~/.agents/skills/manim-video/scripts/render-in-container.sh
+mkdir -p jobs/demo && cp ~/.agents/skills/manim-video/templates/job.json jobs/demo/
+# write jobs/demo/scene.py; set "scene" in jobs/demo/job.json
+"$R" jobs/demo                        # preview: 854x480 @ 15 fps
+"$R" jobs/demo --quality final        # 1920x1080 @ 60 fps
+"$R" jobs/demo --still 12             # full-resolution frame after animation 12
+"$R" jobs/demo --frames --count 16    # more stills, no re-render
 ```
 
-Details: `skills/manim-video/references/environment.md`.
+Each run writes `jobs/demo/out/`: `<Scene>-<quality>.mp4`, `report.md`/`report.json` (ffprobe
+streams, resolution, duration, audio, blank-screen and stall detection, pop-ins, LayoutGuard
+warnings), `stills/` (contact sheets, one still per animation, `index.txt`), `render.log` and
+`summary.json`. The contract and every `job.json` key: `skills/manim-video/references/container.md`.
+
+- **Image** `manim-video:local` (never pushed): Ubuntu 24.04 by digest, apt from a dated
+  `snapshot.ubuntu.com` snapshot, Python packages hash-pinned in `docker/requirements.lock`.
+  Manim Community 0.22.1, manim-voiceover 0.4.0, Python 3.12, TeX Live 2023 (latex-base,
+  latex-extra, fonts-recommended, science, tipa) + dvisvgm 3.2.1, ffmpeg 6.1.1, Cairo/Pango,
+  Noto fonts, Mesa EGL/GL, Intel VA-API. 1.72 GB; first build 6 min 8 s on the nucbox.
+- **Compose** is the definition (`docker/compose.yml`, styled after the host's Jellyfin
+  stack); the wrapper runs `docker compose run --rm` with a unique project per job and removes
+  the container on exit, error, Ctrl-C or SIGTERM. No restart policy, ports or container names;
+  `network_mode` instead of a project network.
+- **Least privilege:** runs as your uid:gid (the image refuses root), job sources read-only and
+  only `out/` writable, read-only root filesystem, `cap_drop: ALL`, `no-new-privileges`, no
+  network for silent jobs.
+- **Narration:** narrated jobs get the host's Kokoro as `host.docker.internal:8880` (Docker host
+  gateway) and `KOKORO_API_KEY` by name, read at run time from the environment or from
+  `~/.config/agent-stack/gateway.env`; never in the image, repo or logs.
+- **GPU (opt-in, `"gpu": true` or `--gpu`):** `docker/compose.gpu.yml` passes `/dev/dri` only and
+  joins the `video` and `render` groups (ids resolved with `getent` at run time). Measured on
+  the nucbox's Intel N150 iGPU: it does not speed up rendering (Cairo is CPU-only; Manim's
+  OpenGL renderer runs on the iGPU but is slower than Cairo here), and VA-API H.264 encoding
+  works from the container but only as an extra post-render step with larger files. So the
+  defaults are Cairo, GPU off, no re-encode. Numbers: `references/container.md`.
+
+## Rendering: the host route (fallback)
+
+`scripts/render.sh preview|final|still scene.py Scene` with a host-native Manim (the venv from
+`setup_env.sh --host`, or `manim` on `PATH`), then `qa_check.py` and `frames.py` by hand. On the
+nucbox it works since the owner installed ffmpeg, TeX Live, dvisvgm and the Cairo/Pango headers;
+it renders the same scene near-identically to the container (SSIM 0.999). Details:
+`skills/manim-video/references/environment.md`.
 
 ## Narration settings
 
@@ -86,16 +120,16 @@ Details: `skills/manim-video/references/environment.md`.
 | `KOKORO_MODEL` | `kokoro` |
 | `KOKORO_VOICE` | `af_heart` |
 | `KOKORO_API_KEY` | unset; read from the environment only, never written or printed |
+| `KOKORO_ENV_FILE` | `~/.config/agent-stack/gateway.env`; the container wrapper reads only the `KOKORO_API_KEY=` line from it when the variable is unset |
 
-To load only the key from an env file without exposing other variables:
-`export KOKORO_API_KEY="$(sed -n 's/^KOKORO_API_KEY=//p' /path/to/secrets.env)"`.
+In a job, `job.json` `narration.voice` and `narration.kokoro.base_url`/`model` override these.
 
 ## Examples (the test prompts)
 
 `examples/` holds the five test prompts, each run through the full loop by a fresh agent that
 had only the skill: prompt, storyboard, final scene code, review log, inspection stills, and
-notes on the bugs found and fixed. Videos are not committed (on the nucbox they are in `out/`);
-rebuild them with `render.sh final examples/<name>/scene.py Explainer`.
+notes on the bugs found and fixed. Videos are not committed (on the nucbox they are in `out/`).
+Each example folder is also a job directory: `render-in-container.sh examples/<name> --quality final`.
 
 | Prompt | Narration | Previews | Final (1080p60) | Rubric |
 |---|---|---|---|---|
@@ -112,9 +146,15 @@ listed in `examples/README.md`.
 
 ```bash
 python3 tests/validate_skill.py   # agentskills.io validator (skills-ref) + portability lint
-python3 tests/check_patterns.py   # renders every scene in references/scene-patterns.md
+tests/test_container.sh           # end to end: build, render, LaTeX, narration, GPU, no strays (~1 min)
+python3 tests/check_patterns.py   # renders every scene in references/scene-patterns.md (container;
+                                  #   --route host for the host route)
+tests/bench_gpu.sh                # CPU vs GPU render and encode benchmark (quiet host, ~6 min)
 mkdir -p out && cp tests/api_smoke.py out/ && skills/manim-video/scripts/render.sh preview out/api_smoke.py
 ```
+
+After changing anything in `skills/manim-video/scripts/*.py` or `docker/`, the next container
+render rebuilds the image automatically (it compares a source hash stored in an image label).
 
 Render output goes under `out/` (git-ignored). `AGENTS.md` has the rules for editing the skill.
 

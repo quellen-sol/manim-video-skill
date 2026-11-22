@@ -1,77 +1,78 @@
-# Environment and render recipe
+# Environment: the two render routes
 
-## What works (verified)
-
-Tested on Ubuntu 24.04 (x86_64, 4 cores, no GPU), as an ordinary user with no root, in the
-`docker` group:
-
-| Piece | Where | Notes |
+| | Container route (default) | Host route (fallback) |
 |---|---|---|
-| Manim Community 0.22.1, TeX Live, Python 3.14 | Docker image `manimcommunity/manim:v0.22.1` | official image, about 1.4 GB on disk |
-| manim-voiceover 0.4.0, ffmpeg, sox | derived image `manim-video:0.22.1` | built from `scripts/docker/Dockerfile` by `setup_env.sh` |
-| ffmpeg, ffprobe (host) | `~/.local/share/manim-video/bin` | static build, used by `frames.py`, `qa_check.py`, `narrate_mux.py` |
-| Python 3.11+ (host) | system `python3` | helper scripts use the standard library only |
-| Kokoro TTS | any OpenAI-compatible `/v1/audio/speech` server | default `http://127.0.0.1:8880/v1` |
+| Entry point | `scripts/render-in-container.sh JOB_DIR` | `scripts/render.sh preview\|final\|still scene.py Scene` |
+| Host needs | Docker + compose plugin, docker group | Manim Community 0.22.1, LaTeX, dvisvgm, ffmpeg, Python 3.11+ |
+| Toolchain | pinned in the `manim-video:local` image | whatever the host has |
+| Checks and stills | run for you, in `out/` | run `qa_check.py` and `frames.py` yourself |
+| Use it for | every render | local testing, comparing against the container, no-Docker machines |
+| Details | [container.md](container.md) | below |
 
-Setup, once per machine: `scripts/setup_env.sh`, then `scripts/check_env.sh --tts`.
+Set up: `scripts/setup_env.sh` (container route), `scripts/setup_env.sh --host` (host route).
+Check: `scripts/check_env.sh` (add `--host`, `--gpu`, `--tts`, `--fonts`).
 
-## How rendering runs
+## Verified on the nucbox (Ubuntu 24.04, Intel N150, 4 cores, Intel iGPU, no root)
 
-`render.sh MODE scene.py Scene` runs, in effect:
+| Piece | Container route | Host route |
+|---|---|---|
+| Manim Community 0.22.1 + manim-voiceover 0.4.0 | in the image, from `docker/requirements.lock` | venv `~/.local/share/manim-video/venv`, same lock file |
+| Python | 3.12.3 | system 3.12.3 |
+| TeX Live 2023, dvisvgm 3.2.1 | in the image | system packages (installed by the owner) |
+| ffmpeg 6.1.1 | in the image | system package; a static build in `~/.local/share/manim-video/bin` is used first if present |
+| Cairo 1.18, Pango 1.52 | in the image | system `libcairo2-dev`, `libpango1.0-dev` |
+| Kokoro TTS | `host.docker.internal:8880` | `127.0.0.1:8880` |
 
-```bash
-docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
-  -v "<project dir>:/manim" -v "<skill>/scripts:/skill/scripts:ro" -e PYTHONPATH=/skill/scripts \
-  --network none \
-  manim-video:0.22.1 manim -ql --progress_bar none scene.py Scene
-```
+The same scene rendered by both routes gives near-identical video (SSIM 0.99, see
+[container.md](container.md)); both use the same Python packages and the same Ubuntu library
+versions.
 
-- `--network none` for silent scenes. For narrated scenes (the file uses `VoiceoverScene` or
-  `KokoroService`) it instead adds `--add-host=host.docker.internal:host-gateway`, rewrites a
-  `127.0.0.1`/`localhost` `KOKORO_BASE_URL` to `host.docker.internal`, and forwards
-  `KOKORO_*` variables by name (the key's value never appears on a command line).
-- Each render is a fresh `--rm` container; nothing keeps running afterwards.
-- Output lands in `<project>/media/videos/<file stem>/<quality>/<Scene>.mp4`, owned by you.
+## The host route
+
+`render.sh MODE scene.py Scene` runs, in effect,
+`cd <scene dir> && PYTHONPATH=<skill>/scripts manim -ql --config_file media/manim-video.cfg scene.py Scene`
+with the venv's `manim` (or `manim` on `PATH`):
+
+- Output lands in `<scene dir>/media/videos/<file stem>/<quality>/<Scene>.mp4`; the log in
+  `media/logs/`. It prints `VIDEO:`/`IMAGE:` lines, whether the layout guard ran and its warnings.
 - Quality: `preview` = `-ql` (854x480, 15 fps), `final` = `-qh` (1920x1080, 60 fps), `still` =
-  `-qh -s` (PNG of the last frame). Override with `PREVIEW_QUALITY=m` or `FINAL_QUALITY=k`.
-- Typical times on 4 CPU cores: a 60 s 2D preview in 20 to 60 s; the 1080p60 final 5 to 15
-  times longer (2 to 2.5 minute explainers took 9 to 22 minutes while other renders shared the
-  machine). Scenes that rebuild many objects every frame (`always_redraw` around groups,
-  epicycles), 3D, and thousands of objects are much slower. A narrated scene's first preview also
-  waits for TTS of every sentence (minutes on a CPU Kokoro); later renders reuse the clips.
-- `render.sh` also writes `media/manim-video.cfg` (the project's `manim.cfg`, if any, plus
-  `max_files_cached = 100000`, so per-animation stills stay correct) and passes it with
-  `--config_file`, and adds `--disable_caching` for narrated scenes.
+  `-qh -s` (PNG of the last frame; add `-- -n 0,K` for the frame after animation K). Override
+  with `PREVIEW_QUALITY=m` or `FINAL_QUALITY=k`.
+- `media/manim-video.cfg` is the project's `manim.cfg` (if any) plus `max_files_cached = 100000`,
+  so per-animation stills stay correct; narrated scenes also get `--disable_caching`.
+- It refuses ManimGL idioms, like the container.
+- Then check and look: `python3 scripts/qa_check.py <video> [--expect-audio | --expect-silent]`
+  and `python3 scripts/frames.py <video> --anims --mid` (or `--count`, `--at`, `--cues`).
+- Narration: the scene calls Kokoro at `KOKORO_BASE_URL` (default `http://127.0.0.1:8880/v1`)
+  directly. `KOKORO_API_KEY` comes from your environment only.
 
-## Choosing a backend
+### Installing the host route
 
-`MANIM_BACKEND=auto` (default) uses a local `manim` if one is installed and reports
-"Manim Community", else Docker. Force with `MANIM_BACKEND=docker` or `MANIM_BACKEND=local`.
+`setup_env.sh --host` checks for the system packages it needs and stops with a list if any are
+missing (it never uses sudo): `python3-venv`, `python3-dev`, `libcairo2-dev`, `libpango1.0-dev`,
+`pkg-config`, a C compiler, `texlive-latex-extra`, `texlive-fonts-recommended`,
+`texlive-science`, `tipa`, `dvisvgm` (and `fonts-noto-core` for the style guide's font). Then it
+creates the venv from `docker/requirements.lock` (hash-checked; `manimpango` and `pycairo` are
+compiled against the Cairo/Pango headers), and fetches a static ffmpeg only if the system one
+is missing or broken. Without LaTeX, write maths with `Text` and Unicode.
 
-### Local install (optional)
+## Typical render times (container, 4 cores)
 
-A local install renders without containers but needs system libraries:
-
-- **pip/uv:** `uv venv && uv pip install "manim==0.22.1" "manim-voiceover==0.4.0"` needs
-  `libcairo2-dev`, `libpango1.0-dev` and `pkg-config` (root to install), because `manimpango`
-  and `pycairo` have no Linux wheels. LaTeX (for `MathTex`) is separate: TeX Live or TinyTeX
-  plus `dvisvgm` and the packages `standalone preview doublestroke relsize fundus-calligra
-  wasysym physics dvisvgm rsfs wasy cm-super jknapltx mathastext microtype ms setspace`.
-- **conda-forge (user space, untested here):** `micromamba create -p ~/.local/share/manim-video/env
-  -c conda-forge python=3.12 manim=0.22.1`, then `pip install manim-voiceover==0.4.0` inside it,
-  and put its `bin` on `PATH`. Add LaTeX as above if needed.
-
-Without LaTeX, write maths with `Text` and Unicode; `check_env.sh` warns when LaTeX is missing.
+A 10 s benchmark scene: preview 7 s, 1080p60 final 24 s (24 frames/s). Explainers of 2 to 2.5
+minutes: previews in 1 to 3 minutes, finals 9 to 22 minutes when other renders shared the
+machine. Scenes that rebuild many objects every frame (`always_redraw` around groups,
+epicycles), 3D, and thousands of objects are much slower. A narrated scene's first preview also
+waits for TTS of every sentence (minutes on a CPU Kokoro); later renders reuse the clips.
 
 ## Environment variables
 
 | Variable | Default | Used by |
 |---|---|---|
-| `MANIM_BACKEND` | `auto` | `render.sh`, `check_env.sh` |
-| `MANIM_IMAGE` | `manim-video:0.22.1` | Docker image to run |
-| `MANIM_BASE_IMAGE` | `manimcommunity/manim:v0.22.1` | base image (silent renders only) |
-| `MANIM_VIDEO_HOME` | `~/.local/share/manim-video` | static ffmpeg location |
-| `PREVIEW_QUALITY`, `FINAL_QUALITY` | `l`, `h` | render qualities |
-| `MANIM_NETWORK` | `auto` | `none` or `tts` to override detection |
-| `FFMPEG`, `FFPROBE` | unset | explicit binary paths for the helpers |
-| `KOKORO_BASE_URL`, `KOKORO_MODEL`, `KOKORO_VOICE`, `KOKORO_API_KEY` | see `narration.md` | narration |
+| `MANIM_IMAGE` | `manim-video:local` | container route: image tag |
+| `MANIM_TTS_NETWORK` | `bridge` | container route: `host` if the host-gateway route to the TTS server is blocked |
+| `KOKORO_ENV_FILE` | `~/.config/agent-stack/gateway.env` | container route: where to read `KOKORO_API_KEY` if it is not set |
+| `MANIM_VIDEO_HOME` | `~/.local/share/manim-video` | host route: static ffmpeg (`bin/`) and the venv |
+| `MANIM_HOST_VENV` | `$MANIM_VIDEO_HOME/venv` | host route: Manim venv |
+| `PREVIEW_QUALITY`, `FINAL_QUALITY` | `l`, `h` | host route: render qualities |
+| `FFMPEG`, `FFPROBE` | unset | host route: explicit binary paths for the helpers |
+| `KOKORO_BASE_URL`, `KOKORO_MODEL`, `KOKORO_VOICE`, `KOKORO_API_KEY` | see [narration.md](narration.md) | narration (job.json wins in the container) |

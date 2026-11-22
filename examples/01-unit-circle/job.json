@@ -1,0 +1,5 @@
+{
+  "_comment": "Render with: skills/manim-video/scripts/render-in-container.sh examples/01-unit-circle [--quality final]",
+  "scene": "Explainer",
+  "quality": "preview"
+}

@@ -1,0 +1,13 @@
+{
+  "scene": "Narrated",
+  "quality": "preview",
+  "narration": {
+    "enabled": true,
+    "voice": "af_heart",
+    "kokoro": {"base_url": "http://127.0.0.1:8880/v1", "model": "kokoro"},
+    "script": {"beats": [
+      {"id": "circle", "text": "Here is a circle with a radius of two."},
+      {"id": "point", "text": "A point travels once around it."}
+    ]}
+  }
+}

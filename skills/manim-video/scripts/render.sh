@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Render a Manim Community scene file headlessly (Docker image or local install).
+# Render a Manim Community scene file with a HOST-NATIVE Manim: the fallback route, for local
+# testing and for comparing against the container. The default route is
+# render-in-container.sh (references/container.md), which needs only Docker.
 #
 # Usage: render.sh <preview|final|still> SCENE_FILE.py [SceneName ...] [-- extra manim args]
 #
@@ -11,20 +13,20 @@
 # With no SceneName, every Scene in the file is rendered (-a).
 # Prints one "VIDEO: <path>" or "IMAGE: <path>" line per new output file.
 #
+# Needs Manim Community 0.22.1 on the host: the venv made by `setup_env.sh --host`
+# ($MANIM_VIDEO_HOME/venv, used first) or `manim` on PATH, plus LaTeX, dvisvgm and ffmpeg.
+#
 # Environment (all optional):
-#   MANIM_BACKEND    auto | docker | local     (auto: local manim if installed, else docker)
 #   PREVIEW_QUALITY  l (default) | m           FINAL_QUALITY  h (default) | p | k | m
-#   MANIM_NETWORK    auto | none | tts         (auto: tts if the file uses KokoroService/VoiceoverScene)
-#   MANIM_IMAGE      docker image (default manim-video:0.22.1, built by setup_env.sh)
 #   KOKORO_BASE_URL, KOKORO_MODEL, KOKORO_VOICE, KOKORO_API_KEY   narration settings
 #
 # The scene file's directory is the project directory: keep the scene, its assets and
-# its output (media/) there. Only that directory is visible to the Docker renderer.
+# its output (media/) there.
 set -euo pipefail
 # shellcheck source=_env.sh
 . "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
 
-usage() { sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
+usage() { sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
 
 [ $# -ge 2 ] || usage
 MODE="$1"; shift
@@ -60,15 +62,14 @@ if [ -n "$GL_HITS" ]; then
   exit 2
 fi
 
-NETWORK="${MANIM_NETWORK:-auto}"
-if [ "$NETWORK" = auto ]; then
-  if grep -qE 'VoiceoverScene|KokoroService' "$PROJECT_DIR/$REL"; then NETWORK=tts; else NETWORK=none; fi
-fi
+NARRATED=0
+grep -qE 'VoiceoverScene|KokoroService' "$PROJECT_DIR/$REL" && NARRATED=1
 
-BACKEND="$(resolve_backend)"
-if [ -z "$BACKEND" ]; then
-  echo "render.sh: no renderer available (MANIM_BACKEND=$MANIM_BACKEND)." >&2
-  echo "  Run scripts/check_env.sh, then scripts/setup_env.sh to install the Docker image." >&2
+MANIM_BIN="$(host_manim)"
+if [ -z "$MANIM_BIN" ]; then
+  echo "render.sh: no host Manim Community found ($MANIM_VIDEO_HOME/venv/bin/manim or manim on PATH)." >&2
+  echo "  Use the container route (scripts/render-in-container.sh), or install the host route with" >&2
+  echo "  scripts/setup_env.sh --host (needs the Cairo/Pango headers; references/environment.md)." >&2
   exit 3
 fi
 
@@ -77,14 +78,7 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 LOG="$PROJECT_DIR/media/logs/$STEM-$MODE-$STAMP.log"
 MARKER="$PROJECT_DIR/media/.render-$STAMP-$$"
 touch "$MARKER"
-CONTAINER="manim-video-$STAMP-$$"
-cleanup() {
-  rm -f "$MARKER"
-  # If this script is interrupted, do not leave the render container running.
-  if [ "${BACKEND:-}" = docker ] && docker ps -q --filter "name=^$CONTAINER\$" 2>/dev/null | grep -q .; then
-    docker kill "$CONTAINER" >/dev/null 2>&1 || true
-  fi
-}
+cleanup() { rm -f "$MARKER"; }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
@@ -104,46 +98,19 @@ with open(sys.argv[2], "w") as f:
     cp.write(f)
 PY
 
-MANIM_ARGS=(manim "${QFLAGS[@]}" --progress_bar none --config_file "$CFG" "$REL" "${SCENES[@]}")
+MANIM_ARGS=("$MANIM_BIN" "${QFLAGS[@]}" --progress_bar none --config_file "$CFG" "$REL" "${SCENES[@]}")
 # Narrated scenes: reusing cached partial movies lets the picture drift from the audio, so
 # always re-render them (the TTS clips stay cached in media/voiceovers/).
-if [ "$NETWORK" = tts ] && [[ " ${EXTRA[*]:-} " != *" --disable_caching "* ]]; then
+if [ "$NARRATED" = 1 ] && [[ " ${EXTRA[*]:-} " != *" --disable_caching "* ]]; then
   MANIM_ARGS+=(--disable_caching)
 fi
 [ ${#EXTRA[@]} -gt 0 ] && MANIM_ARGS+=("${EXTRA[@]}")
 
 START=$(date +%s)
 set +e
-if [ "$BACKEND" = docker ]; then
-  IMAGE="$(resolve_image)"
-  if [ -z "$IMAGE" ]; then
-    echo "render.sh: no Manim image found ($MANIM_IMAGE or $MANIM_BASE_IMAGE). Run scripts/setup_env.sh." >&2
-    exit 3
-  fi
-  DARGS=(run --rm --name "$CONTAINER" --user "$(id -u):$(id -g)" -e HOME=/tmp -e COLUMNS=200
-         -e PYTHONPATH=/skill/scripts -e PYTHONDONTWRITEBYTECODE=1
-         -v "$PROJECT_DIR:/manim" -v "$SCRIPTS_DIR:/skill/scripts:ro" -w /manim)
-  if [ "$NETWORK" = tts ]; then
-    if [ "$IMAGE" = "$MANIM_BASE_IMAGE" ]; then
-      echo "render.sh: narration needs the derived image $MANIM_IMAGE (manim-voiceover). Run scripts/setup_env.sh." >&2
-      exit 3
-    fi
-    # Inside the container, the host's loopback is host.docker.internal.
-    URL="$(printf '%s' "$KOKORO_BASE_URL" | sed -E 's#//(127\.0\.0\.1|localhost)([:/]|$)#//host.docker.internal\2#')"
-    DARGS+=(--add-host=host.docker.internal:host-gateway -e "KOKORO_BASE_URL=$URL" -e KOKORO_MODEL -e KOKORO_VOICE)
-    # Pass the key through by name only, so its value never appears in a command line.
-    [ -n "${KOKORO_API_KEY:-}" ] && DARGS+=(-e KOKORO_API_KEY)
-  else
-    DARGS+=(--network none)
-  fi
-  echo "render.sh: $MODE $REL ${SCENES[*]} (docker: $IMAGE, network: $NETWORK)"
-  docker "${DARGS[@]}" "$IMAGE" "${MANIM_ARGS[@]}" >"$LOG" 2>&1
-  RC=$?
-else
-  echo "render.sh: $MODE $REL ${SCENES[*]} (local: $(command -v manim))"
-  (cd "$PROJECT_DIR" && COLUMNS=200 PYTHONPATH="$SCRIPTS_DIR${PYTHONPATH:+:$PYTHONPATH}" "${MANIM_ARGS[@]}") >"$LOG" 2>&1
-  RC=$?
-fi
+echo "render.sh: $MODE $REL ${SCENES[*]} (host: $MANIM_BIN)"
+(cd "$PROJECT_DIR" && COLUMNS=200 PYTHONPATH="$SCRIPTS_DIR${PYTHONPATH:+:$PYTHONPATH}" "${MANIM_ARGS[@]}") >"$LOG" 2>&1
+RC=$?
 set -e
 ELAPSED=$(( $(date +%s) - START ))
 

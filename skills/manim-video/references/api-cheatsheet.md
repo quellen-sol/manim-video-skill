@@ -1,7 +1,7 @@
 # Manim Community v0.22.1 cheatsheet
 
-Everything here was checked against Manim Community v0.22.1 (the Docker image
-`manimcommunity/manim:v0.22.1`). Import everything with `from manim import *`.
+Everything here was checked against Manim Community v0.22.1 (first in the official image
+`manimcommunity/manim:v0.22.1`, then in the skill's own render image `manim-video:local`). Import everything with `from manim import *`.
 
 Coordinates: the frame is 14.22 wide and 8 tall, centred on the origin. `UP`, `DOWN`, `LEFT`,
 `RIGHT`, `ORIGIN`, `UL`, `UR`, `DL`, `DR`, `IN`, `OUT` are unit vectors (numpy arrays): write

@@ -1,0 +1,17 @@
+# Opt-in GPU access for the manim service (add with -f docker/compose.gpu.yml).
+#
+# Passes the DRM devices only (/dev/dri: card and render nodes) and joins the groups that own
+# them, the same pattern as the host's Jellyfin service. No --privileged, no other /dev entries,
+# no extra capabilities. The group ids are not hardcoded: scripts/render-in-container.sh resolves
+# them at run time with `getent group video render` (falling back to the device files' groups).
+#
+# What it is for (measured numbers in references/container.md): Manim's OpenGL renderer on the
+# iGPU through EGL, and ffmpeg h264_vaapi encoding. The default Cairo renderer is CPU-only and
+# does not use it.
+services:
+  manim:
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "${VIDEO_GID:?set VIDEO_GID (getent group video)}"
+      - "${RENDER_GID:?set RENDER_GID (getent group render)}"

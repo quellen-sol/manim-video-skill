@@ -1,7 +1,8 @@
 """Scene-side helper for the narrate_mux.py fallback (narration without manim-voiceover).
 
     from narration_timeline import Timeline
-    TL = Timeline("audio/timeline.json")          # written by: narrate_mux.py tts narration.json
+    TL = Timeline()   # audio/timeline.json from `narrate_mux.py tts narration.json`; in the render
+                      # container, the file manim-job made ($NARRATION_TIMELINE)
 
     class Explainer(Scene):
         def construct(self):
@@ -18,11 +19,14 @@ Late beats print a line starting with NARRATION, which render.sh shows.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 
 class Timeline:
-    def __init__(self, path: str | Path = "audio/timeline.json"):
+    def __init__(self, path: str | Path | None = None):
+        # In the render container, manim-job sets NARRATION_TIMELINE (job.json narration.mode "mux").
+        path = path or os.environ.get("NARRATION_TIMELINE", "audio/timeline.json")
         data = json.loads(Path(path).read_text())
         self.lead_in = float(data.get("lead_in", 0))
         self.total = float(data["total"])

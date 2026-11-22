@@ -55,8 +55,8 @@ Rules:
 
 ## Fonts and text
 
-- `Text.set_default(font="Noto Sans")` at the top of the file (the Docker image's default font
-  is a serif). Monospace for code: `Noto Mono`. Check the fonts available to your renderer
+- `Text.set_default(font="Noto Sans")` at the top of the file (renderers differ in their
+  default font; the render image has Noto Sans, Noto Mono and DejaVu). Monospace for code: `Noto Mono`. Check the fonts available to your renderer
   with `fc-list : family` if you change them; a missing font silently falls back.
 - Maths in `MathTex` (LaTeX Computer Modern). Do not mix `Text` and `MathTex` for the same
   symbol; write θ either always in `MathTex` or always as a `Text` character.

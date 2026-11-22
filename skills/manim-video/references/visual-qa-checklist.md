@@ -4,19 +4,24 @@ Run this after every preview render. Automated help first, then your own eyes.
 
 ## 0. Collect the evidence
 
-1. `render.sh` output: confirm it says `layout guard active`, then read every `LAYOUT` line
-   (`CLIPPED`, `UNSAFE`, `OFFSCREEN`, `OVERLAP`, `CROSSED`, `END`) and every `NARRATION` line.
-2. `qa_check.py VIDEO [--expect-audio | --expect-silent]`: every FAIL is a bug; every WARN needs
-   either a fix or a one-line explanation in `review.md`.
-3. `frames.py VIDEO --anims --mid`: open every `sheet_NN.png` on the first preview; on later
-   previews, the sheets for the changed time window (`--from`/`--to`) plus `--count 16` for the
+Commands are for the container route (`R` = `scripts/render-in-container.sh`); host-route
+equivalents are in brackets.
+
+1. `out/report.md` [`render.sh` output]: confirm `LayoutGuard: active` [`layout guard active`],
+   then read every `LAYOUT` line (`CLIPPED`, `UNSAFE`, `OFFSCREEN`, `OVERLAP`, `CROSSED`, `END`)
+   and every `NARRATION` line.
+2. The checks in `out/report.md` [`qa_check.py VIDEO [--expect-audio | --expect-silent]`]: every
+   FAIL is a bug; every WARN needs either a fix or a one-line explanation in `review.md`.
+3. The stills in `out/stills/` [`frames.py VIDEO --anims --mid`]: open every `sheet_NN.png` on
+   the first preview; on later previews, the sheets for the changed time window
+   (`R JOB_DIR --frames --anims --from S --to S`) plus `R JOB_DIR --frames --count 16` for the
    whole video. Then open full-size stills (`frame_NNN_t*.png`) wherever text is small, objects
    are close, or anything looks odd, and **every label placed near a line** (contact sheets hide
    collisions of a few pixels).
-4. Render the 2 or 3 busiest frames at full resolution every iteration:
-   `render.sh still scene.py Explainer -- -n 0,K` (K = the `anim K` number in `index.txt`).
+4. Render the 2 or 3 busiest frames at full resolution every iteration: `R JOB_DIR --still K`
+   [`render.sh still scene.py Explainer -- -n 0,K`] (K = the `anim K` number in `index.txt`).
 5. If a bug might be transient (a flash, a jump), extract frames around it:
-   `frames.py VIDEO --at 12.0,12.07,12.13,12.2`.
+   `R JOB_DIR --frames --at 12.0,12.07,12.13,12.2` [`frames.py VIDEO --at ...`].
 
 ## 1. Layout
 

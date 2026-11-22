@@ -19,7 +19,8 @@ Modes (default: --anims when Manim's partial-movie list is complete, else --coun
 Writes a new run folder (default <video dir>/frames_<stem>/<timestamp>/, so earlier runs stay for
 before/after comparisons) with frame_NNN_tSSS.ss.png, contact sheets sheet_NN.png (tiles in reading
 order) and index.txt. In index.txt, "anim K" is Manim's 0-based animation number: render that frame
-at full resolution with  render.sh still scene.py Scene -- -n 0,K
+at full resolution with  render-in-container.sh JOB_DIR --still K  (container route) or
+render.sh still scene.py Scene -- -n 0,K  (host route)
 Needs ffmpeg and ffprobe (on PATH or in ~/.local/share/manim-video/bin). Python 3.11+, stdlib only.
 """
 
@@ -231,7 +232,7 @@ def main() -> None:
              f"window: {lo:.2f}-{hi:.2f}s, {len(frames)} stills, {args.per_sheet} tiles per sheet, "
              f"{args.cols} per row, reading order",
              "anim K = Manim's 0-based animation number; full-resolution still: "
-             "render.sh still scene.py Scene -- -n 0,K", ""]
+             "render-in-container.sh JOB_DIR --still K (host route: render.sh still scene.py Scene -- -n 0,K)", ""]
     for n, start in enumerate(range(0, len(frames), args.per_sheet), 1):
         chunk = index[start:start + args.per_sheet]
         lines.append(f"sheet_{n:02d}.png  {chunk[0][0]:.1f}-{chunk[-1][0]:.1f}s")

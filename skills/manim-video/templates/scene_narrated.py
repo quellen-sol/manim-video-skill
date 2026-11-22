@@ -1,14 +1,17 @@
 """<Title>: <one-sentence learning goal>. Narrated with Kokoro through manim-voiceover.
 
-Render: "$SKILL_DIR/scripts/render.sh" preview scene.py Explainer
-(render.sh sees VoiceoverScene/KokoroService and lets the renderer reach the TTS server;
-clips are cached in media/voiceovers/, so re-renders only synthesize changed sentences.)
+Render: "$SKILL_DIR/scripts/render-in-container.sh" JOB_DIR, with job.json
+  {"scene": "Explainer", "narration": {"enabled": true, "script": {"beats": [...]}}}
+(only narrated jobs reach the TTS server; clips are cached in out/media/voiceovers/, so
+re-renders only synthesize changed sentences). Host route: render.sh preview scene.py Explainer.
+With the words in job.json, write  text=line("intro")  (from narration_script import line)
+instead of the literal strings below.
 """
 
 from manim import *
 from manim_voiceover import VoiceoverScene
 
-from kokoro_service import KokoroService  # on PYTHONPATH when rendered with render.sh
+from kokoro_service import KokoroService  # on PYTHONPATH in the render image (and under render.sh)
 
 try:
     from manim_qa import LayoutGuard

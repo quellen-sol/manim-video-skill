@@ -76,10 +76,11 @@ Hermes Agent (not changed by this script): add the shared directory to ~/.hermes
       - ~/.agents/skills
 Hermes may edit skills in external dirs in place; consider skills.write_approval: true.
 
-Next: run the toolchain check (installs nothing):
-  $SRC/scripts/check_env.sh
-and, if it reports NOT READY, the user-space setup (no sudo):
-  $SRC/scripts/setup_env.sh
+Next, the render container (the default render route; needs Docker with the compose plugin):
+  $SRC/scripts/setup_env.sh          # builds the image manim-video:local (about 6 min, no sudo)
+  $SRC/scripts/check_env.sh          # read-only check; add --gpu, --tts
+Host route (fallback without Docker; needs Cairo/Pango headers and LaTeX from the system):
+  $SRC/scripts/setup_env.sh --host --no-image
 EOF
 fi
 exit $RC

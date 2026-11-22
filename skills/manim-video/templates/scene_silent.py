@@ -1,11 +1,12 @@
 """<Title>: <one-sentence learning goal>.
 
-Render: "$SKILL_DIR/scripts/render.sh" preview scene.py Explainer
+Render: "$SKILL_DIR/scripts/render-in-container.sh" JOB_DIR   (job.json: {"scene": "Explainer"})
+Host route: "$SKILL_DIR/scripts/render.sh" preview scene.py Explainer
 """
 
 from manim import *
 
-try:  # layout checker; on PYTHONPATH when rendered with render.sh
+try:  # layout checker; on PYTHONPATH in the render image (and under render.sh)
     from manim_qa import LayoutGuard
 except ImportError:  # keeps the file renderable without the skill
     print("LAYOUT-GUARD unavailable: manim_qa not importable; layout checks are off", flush=True)
@@ -15,7 +16,7 @@ except ImportError:  # keeps the file renderable without the skill
 
 # --- style (references/style-guide.md) -----------------------------------------------
 config.background_color = "#0F1117"
-Text.set_default(font="Noto Sans")        # the Docker image's default font is a serif
+Text.set_default(font="Noto Sans")        # set it: renderers differ in their default font
 MarkupText.set_default(font="Noto Sans")
 
 # --- colour legend: one colour per concept, used everywhere ---------------------------

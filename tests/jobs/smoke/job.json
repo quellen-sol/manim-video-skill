@@ -1,0 +1,5 @@
+{
+  "_comment": "Smoke test: Text, MathTex, Tex, Axes at preview quality, silent, CPU.",
+  "scene": "Smoke",
+  "quality": "preview"
+}

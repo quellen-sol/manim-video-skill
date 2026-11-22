@@ -1,0 +1,6 @@
+{
+  "_comment": "Render with: skills/manim-video/scripts/render-in-container.sh examples/05-gradient-descent-narrated [--quality final]",
+  "scene": "Explainer",
+  "quality": "preview",
+  "narration": {"enabled": true, "voice": "af_heart"}
+}

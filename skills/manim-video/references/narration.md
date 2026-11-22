@@ -17,8 +17,15 @@ Narration is optional. Ask the user before planning (SKILL.md Step 0); silent is
 ## Primary path: manim-voiceover with Kokoro
 
 `scripts/kokoro_service.py` provides `KokoroService`, a manim-voiceover `SpeechService` that
-POSTs to an OpenAI-compatible `/v1/audio/speech` endpoint. `render.sh` puts it on `PYTHONPATH`
-and, for scenes that use it, lets the Docker renderer reach the TTS server.
+POSTs to an OpenAI-compatible `/v1/audio/speech` endpoint. It is on `PYTHONPATH` in the render
+image (and under `render.sh` on the host route). In the container, set
+`"narration": {"enabled": true}` in job.json: only then does the job get network access to the
+TTS server (as `host.docker.internal`) and the key.
+
+Keep the words in job.json (`narration.script`, `{"beats": [{"id": "intro", "text": "..."}]}`)
+and read them in the scene with `from narration_script import line`, then
+`with self.voiceover(text=line("intro")) as tracker:`. You can then rewrite a sentence without
+touching the code. Plain strings in `self.voiceover(text="...")` work too.
 
 ```python
 from manim import *
@@ -50,11 +57,11 @@ class Explainer(VoiceoverScene):
   of a long narrated scene is slow (Kokoro on CPU synthesizes each sentence); later ones reuse
   the clips.
 - Manim's own animation cache is different: reusing cached partial movies lets the picture drift
-  from the audio by up to a frame per animation, so `render.sh` passes `--disable_caching` for
-  narrated scenes. Leave it on.
+  from the audio by up to a frame per animation, so both routes pass `--disable_caching` for
+  narrated renders. Leave it on.
 - manim-voiceover writes `<Scene>.srt` next to the video, with every sentence's exact start and
-  end. `frames.py VIDEO --cues` takes one still per sentence, labelled with its text: the sync
-  check for Step 4. The same file can be shipped as subtitles.
+  end. `render-in-container.sh JOB_DIR --frames --cues` (host: `frames.py VIDEO --cues`) takes
+  one still per sentence, labelled with its text: the sync check for Step 4. The same file can be shipped as subtitles.
 - Word-level bookmarks (`<bookmark mark="A"/>` with `self.wait_until_bookmark("A")`) need a
   transcription model (the `transcribe` extra, Whisper), which is not installed. Use separate
   `voiceover` blocks per sentence instead.
@@ -62,6 +69,13 @@ class Explainer(VoiceoverScene):
 ## Fallback: one WAV per beat, then mux
 
 Use this when manim-voiceover cannot be installed or imported in the renderer.
+
+**In the container** it is one setting: `"narration": {"enabled": true, "mode": "mux",
+"script": "narration.json"}`. The container synthesizes and measures one WAV per beat before
+rendering (into `out/audio/`), sets `NARRATION_TIMELINE` so `Timeline()` finds it, renders, then
+muxes the clips onto the video and checks the audio. Write the scene as in step 3 below.
+
+**On the host route**, by hand:
 
 1. Write `narration.json` (template: `templates/narration.json`): beat ids, text, optional
    per-beat `gap`.
@@ -73,7 +87,7 @@ Use this when manim-voiceover cannot be installed or imported in the renderer.
 
    ```python
    from narration_timeline import Timeline
-   TL = Timeline("audio/timeline.json")
+   TL = Timeline()          # audio/timeline.json, or $NARRATION_TIMELINE in the container
    ...
        TL.sync(self, "intro")                       # wait until the intro clip starts
        self.play(Create(circle), run_time=TL.speech("intro"))
@@ -97,13 +111,17 @@ Use this when manim-voiceover cannot be installed or imported in the renderer.
 | `KOKORO_API_KEY` | unset | optional; sent as `Authorization: Bearer` |
 
 The key is only ever read from the environment. Do not print it, echo it, write it into scene
-files, logs or reports, or pass it on a command line. `render.sh` forwards it to the container
-by name only.
+files, logs or reports, or pass it on a command line. In the container route,
+`render-in-container.sh` passes it to narrated jobs by name only (silent jobs never get it); if it
+is not set, it reads only the `KOKORO_API_KEY=` line from `KOKORO_ENV_FILE` (default
+`~/.config/agent-stack/gateway.env`, if readable). In job.json, `narration.voice` and
+`narration.kokoro.base_url`/`model` override the variables above.
 
 ## Checks specific to narration
 
-- `qa_check.py --expect-audio`: audio stream present, not silent, not clipping, narration not
+- The automated checks (`out/report.md`; host: `qa_check.py --expect-audio`): audio stream present, not silent, not clipping, narration not
   cut off at the end, no long gaps in speech.
-- `frames.py VIDEO --cues`: confirm each sentence's still shows what the sentence talks about.
+- `--frames --cues` (host: `frames.py VIDEO --cues`): confirm each sentence's still shows what
+  the sentence talks about.
 - If a beat feels rushed, lengthen the sentence's animations or add a short pause; if it drags,
   tighten the sentence rather than speeding up the voice.

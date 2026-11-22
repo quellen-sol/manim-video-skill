@@ -35,7 +35,13 @@ docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
 - Quality: `preview` = `-ql` (854x480, 15 fps), `final` = `-qh` (1920x1080, 60 fps), `still` =
   `-qh -s` (PNG of the last frame). Override with `PREVIEW_QUALITY=m` or `FINAL_QUALITY=k`.
 - Typical times on 4 CPU cores: a 60 s 2D preview in 20 to 60 s; the 1080p60 final 5 to 15
-  times longer. 3D and thousands of objects are much slower.
+  times longer (2 to 2.5 minute explainers took 9 to 22 minutes while other renders shared the
+  machine). Scenes that rebuild many objects every frame (`always_redraw` around groups,
+  epicycles), 3D, and thousands of objects are much slower. A narrated scene's first preview also
+  waits for TTS of every sentence (minutes on a CPU Kokoro); later renders reuse the clips.
+- `render.sh` also writes `media/manim-video.cfg` (the project's `manim.cfg`, if any, plus
+  `max_files_cached = 100000`, so per-animation stills stay correct) and passes it with
+  `--config_file`, and adds `--disable_caching` for narrated scenes.
 
 ## Choosing a backend
 

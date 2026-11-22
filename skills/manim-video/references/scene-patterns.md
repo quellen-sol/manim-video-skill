@@ -68,6 +68,12 @@ class UnitCircleLive(LayoutGuard, Scene):
 Notes: build the picture first (circle, radius, angle), then the segments, then the numbers.
 Put the readout well away from the diagram so labels never collide as the point moves.
 
+For all six functions (tan, sec, csc, cot as well): cos and sec both lie along the x-axis, so
+draw sec slightly below the axis (or as a bracket) and give each its own beat; place labels
+outside the circle and re-check them at the extremes of every angle sweep; scale arcs and
+right-angle marks with the radius if you zoom; and hold more than 4 or 5 colours only by grouping
+reciprocal pairs (sin/csc, cos/sec, tan/cot) in related shades.
+
 ## 2. Equation steps with colour-matched parts
 
 Colour each symbol the same as its picture, then step the algebra with `TransformMatchingTex`.
@@ -219,6 +225,20 @@ def edge(a, b):
 
 
 class CommitGraph(LayoutGuard, Scene):
+    def replay(self, srcs, labels, positions):
+        """Rebase: copies of the commits travel together (same offset, so they never cross each
+        other), then swap to their new ids with a fade (no text morph)."""
+        news = [commit(l, p, GREEN) for l, p in zip(labels, positions)]
+        copies = [s.copy().set_opacity(1) for s in srcs]
+        self.play(*[c.animate.shift(n[0].get_center() - s[0].get_center())
+                    for c, n, s in zip(copies, news, srcs)], run_time=1.2)
+        self.play(*[FadeOut(c[1]) for c in copies], run_time=0.3)
+        self.play(*[FadeIn(n[1]) for n in news], run_time=0.3)
+        for c, n in zip(copies, news):
+            self.remove(c)
+            self.add(n)
+        return news
+
     def construct(self):
         main_y, feat_y = 1.0, -1.3
         c1, c2 = commit("a1", [-5, main_y, 0]), commit("a2", [-3, main_y, 0])
@@ -232,19 +252,25 @@ class CommitGraph(LayoutGuard, Scene):
         c3 = commit("a3", [1, main_y, 0])
         self.play(Create(edge(c2, c3)), FadeIn(c3), main.animate.next_to(c3, UP, buff=0.25))
         self.wait(1)
-        # rebase: replay b1, b2 on top of a3 as new commits b1', b2'
-        r1, r2 = commit("b1'", [3, main_y - 1.3, 0], GREEN), commit("b2'", [5, main_y - 1.3, 0], GREEN)
-        e1, e2 = edge(c3, r1), edge(r1, r2)
-        ghosts = VGroup(f1, f2)
-        self.play(ghosts.animate.set_opacity(0.25), Create(e1), TransformFromCopy(f1, r1))
-        self.play(Create(e2), TransformFromCopy(f2, r2), feat.animate.next_to(r2, DOWN, buff=0.7))
+        # rebase: replay b1, b2 on top of a3 as new commits b1', b2' (new ids: they are new commits)
+        self.play(VGroup(f1, f2).animate.set_opacity(0.25))
+        r1, r2 = self.replay([f1, f2], ["b1'", "b2'"], [[3, main_y - 1.3, 0], [5, main_y - 1.3, 0]])
+        self.play(Create(edge(c3, r1)), Create(edge(r1, r2)),       # arrows after both copies land
+                  feat.animate.next_to(r2, DOWN, buff=0.7))
         self.wait(1.5)
         self.play(FadeOut(*self.mobjects))
 ```
 
-For merges, add a commit with two `edge` lines (one from each parent) and move the branch tag.
-For conflicts, show the two versions of the same lines side by side (`Code` or `Text` panels)
-with the conflicting line highlighted by a `SurroundingRectangle`, then the resolved file.
+- For merges, add a commit with two `edge` lines (one from each parent) and move the branch tag.
+- Add a `HEAD` tag above the checked-out branch's tag and move the two together.
+- Moving tags cross other tags on a two-lane graph: move them along an arc
+  (`tag.animate(path_arc=PI / 3)`) or move them before drawing the new commit's edge, and check
+  the `--mid` frames.
+- Never morph one commit id into another (`Transform` between different strings scrambles the
+  letters); swap them with a fade, as `replay` does. Copies that move by the same
+  offset never collide with each other; one-by-one hops need checking at the `--mid` frames.
+- For conflicts, show the two versions of the same lines side by side (`Code` or `Text` panels)
+  with the conflicting line highlighted by a `SurroundingRectangle`, then the resolved file.
 
 ## 7. Rotating vectors (epicycles) drawing a closed shape
 
@@ -294,7 +320,15 @@ class Epicycles(LayoutGuard, Scene):
         self.wait(1)
 ```
 
-Fewer terms make a rounder shape; show that progression (5, 11, 21 terms) to build intuition.
+- Fewer terms make a rounder shape; show that progression (for example 1, 3, 10, 50 terms) to
+  build intuition, and keep each result as a thumbnail for the recap.
+- Pick a shape with corners and no symmetry (a lightning bolt, a letter): a smooth or symmetric
+  shape needs only a few terms, so "more arrows, sharper drawing" is invisible.
+- With whole-number frequencies the rig returns to its start at `t = 1`, so you can reset `t`
+  to 0 between passes without a visible jump.
+- `TracedPath` records whatever positions it sees per frame, so the 15 fps preview and the 60 fps
+  final differ slightly; for an exact, rewindable trail use
+  `always_redraw(lambda: ParametricFunction(tip_at, t_range=[0, max(t.get_value(), 1e-3)]))`.
 
 ## 8. Gradient descent on a loss curve
 
@@ -368,3 +402,35 @@ class ChapterAndRecap(LayoutGuard, Scene):
         self.wait(2.5)
         self.play(FadeOut(recap))
 ```
+
+## 11. Swapping captions and labels without overlap
+
+Fading the old text out while the new one fades in (in the same `play`) shows both on top of each
+other mid-transition; `Transform` between different strings scrambles the letters. Swap in two
+short steps instead, and keep captions inside the safe area.
+
+```python
+class Captions(LayoutGuard, Scene):
+    def swap(self, old, new, run_time=0.35):
+        """Replace old with new in place: old leaves first, then new arrives."""
+        if old is not None:
+            self.play(FadeOut(old, shift=0.15 * UP), run_time=run_time)
+        self.play(FadeIn(new, shift=0.15 * UP), run_time=run_time)
+        return new
+
+    def caption(self, text, size=30):
+        cap = Text(text, font_size=size).to_edge(DOWN, buff=0.6)
+        if cap.width > 12:                       # stay inside the safe area (x within ±6.5)
+            cap.scale_to_fit_width(12)
+        return cap
+
+    def construct(self):
+        cap = self.swap(None, self.caption("A commit is a snapshot"))
+        self.wait(1)
+        cap = self.swap(cap, self.caption("A branch is a label that moves"))
+        self.wait(1)
+        self.play(FadeOut(cap))
+```
+
+For an equation step where most symbols stay, `TransformMatchingTex` is right (pattern 2); when
+few parts match, it crossfades whole equations: write the new line under the old one instead.

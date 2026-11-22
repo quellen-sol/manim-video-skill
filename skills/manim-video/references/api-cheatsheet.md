@@ -216,3 +216,21 @@ Named: `BLUE #58C4DD`, `TEAL #5CD0B3`, `GREEN #83C167`, `YELLOW #F7D96F`, `GOLD 
 - `Group` for mixed raster and vector content; `VGroup` only for vector mobjects.
 - `Arrow(buff=0.25)` by default leaves a gap at both ends; `buff=0` to touch the points.
 - `next_to` places by bounding box; rotated or curved objects can still touch. Check the stills.
+- Updaters must be lambdas or plain functions. A bound method (`m.add_updater(self.follow)`)
+  drags the Scene into Manim's deep copies and crashes with `cannot pickle '_thread.lock'`.
+- `always_redraw` objects fight animations: `clear_updaters()` before `FadeOut`, `Transform` or
+  `.animate`. To fade a redrawn rig in and out, give it an opacity `ValueTracker` that the lambda
+  reads (`.set_opacity(alpha.get_value())`) and animate the tracker instead.
+- `Transform`/`ReplacementTransform` between different strings (or different numbers of lines)
+  scrambles the glyphs mid-way; fade the old out, then the new in. `TransformMatchingTex` only
+  helps when most parts match.
+- `TransformFromCopy(a, b, path_arc=x)` curves the opposite way from `Transform` with the same
+  `path_arc` (it runs a transform backwards). Check the `--mid` frames and flip the sign.
+- `Indicate` scales its target, so a highlighted line overshoots its ends; use
+  `ShowPassingFlash(line.copy().set_stroke(YELLOW, width=8))` for segments.
+- `NumberLine(include_numbers=True)`: the numbers are part of the object, so `move_to` centres
+  line plus numbers and the line itself ends up off-centre. Place points with `number_line.n2p(x)`.
+- Keep references to the objects you will animate later; do not look them up by `id()`, which
+  Python reuses after an object is garbage-collected.
+- A word next to maths: put it inside the `MathTex` (`r"\text{loss } L"`) so they share a
+  baseline, or `align_to(other, DOWN)`; `next_to` alone centres them vertically.

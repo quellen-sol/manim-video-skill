@@ -4,20 +4,24 @@ Run this after every preview render. Automated help first, then your own eyes.
 
 ## 0. Collect the evidence
 
-1. `render.sh` output: read every `LAYOUT` line (from `LayoutGuard`) and every `NARRATION` line.
+1. `render.sh` output: confirm it says `layout guard active`, then read every `LAYOUT` line
+   (`CLIPPED`, `UNSAFE`, `OFFSCREEN`, `OVERLAP`, `CROSSED`, `END`) and every `NARRATION` line.
 2. `qa_check.py VIDEO [--expect-audio | --expect-silent]`: every FAIL is a bug; every WARN needs
    either a fix or a one-line explanation in `review.md`.
-3. `frames.py VIDEO --beats --mid`: open **every** `sheet_NN.png`. Then open full-size stills
-   (`frame_NNN_t*.png`) wherever text is small, objects are close, or anything looks odd.
-   For text that is small in the 480p preview, render the frame at full resolution:
-   `render.sh still scene.py Explainer -- -n 0,K` (K = animation number from `index.txt`).
-4. If a bug might be transient (a flash, a jump), extract frames around it:
+3. `frames.py VIDEO --anims --mid`: open every `sheet_NN.png` on the first preview; on later
+   previews, the sheets for the changed time window (`--from`/`--to`) plus `--count 16` for the
+   whole video. Then open full-size stills (`frame_NNN_t*.png`) wherever text is small, objects
+   are close, or anything looks odd, and **every label placed near a line** (contact sheets hide
+   collisions of a few pixels).
+4. Render the 2 or 3 busiest frames at full resolution every iteration:
+   `render.sh still scene.py Explainer -- -n 0,K` (K = the `anim K` number in `index.txt`).
+5. If a bug might be transient (a flash, a jump), extract frames around it:
    `frames.py VIDEO --at 12.0,12.07,12.13,12.2`.
 
 ## 1. Layout
 
 - [ ] Nothing is clipped by the frame edge; nothing important sits outside the safe area
-      (x within ±6.4, y within ±3.4).
+      (x within ±6.5, y within ±3.5).
 - [ ] No text overlaps other text; no label sits on top of a line, arrow or shape it does not
       name (check rotated and curved elements, which bounding-box checks miss).
 - [ ] No object covers another unintentionally (z-order): labels and highlights are on top
@@ -45,6 +49,8 @@ Run this after every preview render. Automated help first, then your own eyes.
       `FadeOut`.
 - [ ] Nothing pops in or out without an animation, unless it is a deliberate cut (`cuts` lines
       from `qa_check.py`).
+- [ ] Text swaps are clean in the `--mid` frames: no two captions or titles overlapping
+      mid-fade, no scrambled glyphs from a `Transform` between different strings.
 
 ## 4. Motion and timing
 
@@ -72,7 +78,8 @@ Run this after every preview render. Automated help first, then your own eyes.
 ## 7. Narration (if any)
 
 - [ ] `qa_check.py --expect-audio` passes; audio level is reasonable and not clipping.
-- [ ] Each sentence plays while its visual is on screen; no visual changes topic mid-sentence.
+- [ ] `frames.py VIDEO --cues`: each sentence's still (labelled with its text) shows that
+      sentence's visual; no visual changes topic mid-sentence.
 - [ ] No narration gap longer than about 3 s, except planned pauses.
 - [ ] The voice does not read out on-screen text word for word.
 - [ ] Pronunciation of symbols and jargon is plausible (write "theta", "sine of theta", "x

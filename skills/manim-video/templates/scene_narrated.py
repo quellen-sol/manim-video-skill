@@ -13,6 +13,8 @@ from kokoro_service import KokoroService  # on PYTHONPATH when rendered with ren
 try:
     from manim_qa import LayoutGuard
 except ImportError:
+    print("LAYOUT-GUARD unavailable: manim_qa not importable; layout checks are off", flush=True)
+
     class LayoutGuard:
         pass
 

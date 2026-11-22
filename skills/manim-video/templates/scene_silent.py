@@ -8,6 +8,8 @@ from manim import *
 try:  # layout checker; on PYTHONPATH when rendered with render.sh
     from manim_qa import LayoutGuard
 except ImportError:  # keeps the file renderable without the skill
+    print("LAYOUT-GUARD unavailable: manim_qa not importable; layout checks are off", flush=True)
+
     class LayoutGuard:
         pass
 
@@ -33,13 +35,29 @@ class Explainer(LayoutGuard, Scene):
         self.beat_build()
         self.beat_recap()
 
+    # Helpers ----------------------------------------------------------------------------
+    def swap(self, old, new, run_time=0.35):
+        """Replace a caption/title in place: old leaves first, then new arrives (no overlap,
+        no scrambled letters). Returns new."""
+        if old is not None:
+            self.play(FadeOut(old, shift=0.15 * UP), run_time=run_time)
+        self.play(FadeIn(new, shift=0.15 * UP), run_time=run_time)
+        return new
+
+    def caption(self, text, color=WHITE):
+        cap = Text(text, font_size=LABEL_SIZE, color=color).to_edge(DOWN, buff=0.6)
+        return cap.scale_to_fit_width(12) if cap.width > 12 else cap
+
     # One method per storyboard beat ------------------------------------------------------
     def beat_hook(self):
         """Beat 1: a concrete picture the viewer already understands."""
         title = Text("Title of the idea", font_size=TITLE_SIZE).to_edge(UP, buff=0.5)
         self.play(Write(title))
+        self.cap = self.swap(None, self.caption("a short caption"))
         self.wait(1)
-        self.play(FadeOut(title))
+        self.cap = self.swap(self.cap, self.caption("the next caption"))
+        self.wait(1)
+        self.play(FadeOut(title, self.cap))
 
     def beat_build(self):
         """Beat 2: build the diagram piece by piece; one idea per beat."""

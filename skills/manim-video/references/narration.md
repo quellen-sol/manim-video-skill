@@ -36,15 +36,25 @@ class Explainer(VoiceoverScene):
         self.wait(0.5)
 ```
 
-- Animations inside the `with` block share the clip's time: split it with fractions of
-  `tracker.duration` and finish with `tracker.get_remaining_duration()`.
+- **One `voiceover` block per clause that has its own visual change.** Inside a block, several
+  animations share the clip's time (fractions of `tracker.duration`, finishing with
+  `tracker.get_remaining_duration()`), but the fractions are guesses about where words fall;
+  separate blocks put each visual exactly on its words.
 - When the block's animations end before the speech, manim-voiceover waits for the speech to
   finish at the end of the block, so a sentence is never cut off.
 - Add `self.wait(0.3)` to `self.wait(1)` between blocks when a pause helps.
 - Options: `KokoroService(voice="am_michael", speed=1.0)`. List voices with
   `curl -s $KOKORO_BASE_URL/audio/voices`.
 - Clips are cached in `media/voiceovers/` (with `cache.json`); re-renders only synthesize
-  sentences whose text changed. Delete nothing there by hand during iteration.
+  sentences whose text changed. Delete nothing there by hand during iteration. The first render
+  of a long narrated scene is slow (Kokoro on CPU synthesizes each sentence); later ones reuse
+  the clips.
+- Manim's own animation cache is different: reusing cached partial movies lets the picture drift
+  from the audio by up to a frame per animation, so `render.sh` passes `--disable_caching` for
+  narrated scenes. Leave it on.
+- manim-voiceover writes `<Scene>.srt` next to the video, with every sentence's exact start and
+  end. `frames.py VIDEO --cues` takes one still per sentence, labelled with its text: the sync
+  check for Step 4. The same file can be shipped as subtitles.
 - Word-level bookmarks (`<bookmark mark="A"/>` with `self.wait_until_bookmark("A")`) need a
   transcription model (the `transcribe` extra, Whisper), which is not installed. Use separate
   `voiceover` blocks per sentence instead.
@@ -92,8 +102,8 @@ by name only.
 
 ## Checks specific to narration
 
-- `qa_check.py --expect-audio`: audio stream present, not silent, not clipping, audio and video
-  lengths agree, no long gaps in speech.
-- Look at the stills at each beat's start time and confirm the visual matches the sentence.
+- `qa_check.py --expect-audio`: audio stream present, not silent, not clipping, narration not
+  cut off at the end, no long gaps in speech.
+- `frames.py VIDEO --cues`: confirm each sentence's still shows what the sentence talks about.
 - If a beat feels rushed, lengthen the sentence's animations or add a short pause; if it drags,
   tighten the sentence rather than speeding up the voice.

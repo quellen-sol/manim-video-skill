@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Check that everything the manim-video skill needs is present. Read-only; installs nothing.
 #
-# Usage: check_env.sh [--tts]     (--tts also synthesizes one short test clip with Kokoro)
+# Usage: check_env.sh [--tts] [--fonts]
+#   --tts    also synthesize one short test clip with Kokoro
+#   --fonts  list the font families available to the renderer (for Text(font=...))
 #
 # Checks: render backend (Docker image or local Manim Community), Manim version, Python >= 3.11,
 # LaTeX + dvisvgm, manim-voiceover, host ffmpeg/ffprobe (for frames.py and qa_check.py), host
@@ -11,8 +13,16 @@ set -uo pipefail
 # shellcheck source=_env.sh
 . "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
 
-TTS_TEST=0; [ "${1:-}" = "--tts" ] && TTS_TEST=1
-FAILS=0; WARNS=0
+TTS_TEST=0; FONTS=0
+for a in "$@"; do
+  case "$a" in
+    --tts) TTS_TEST=1 ;;
+    --fonts) FONTS=1 ;;
+    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "check_env.sh: unknown option $a" >&2; exit 2 ;;
+  esac
+done
+FAILS=0; WARNS=0; NARR=""
 ok()   { printf '  OK    %s\n' "$*"; }
 warn() { printf '  WARN  %s\n' "$*"; WARNS=$((WARNS+1)); }
 fail() { printf '  FAIL  %s\n' "$*"; FAILS=$((FAILS+1)); }
@@ -69,7 +79,12 @@ if [ ${#RUN[@]} -gt 0 ]; then
     warn "LaTeX or dvisvgm missing in the renderer: use Text/MarkupText instead of MathTex/Tex, or the Docker backend"
   fi
   if printf '%s\n' "$REPORT" | grep -q 'voiceover yes'; then ok "manim-voiceover installed"
-  else warn "manim-voiceover missing in the renderer: narration must use narrate_mux.py (fallback)"; fi
+  else warn "manim-voiceover missing in the renderer: narration must use narrate_mux.py (fallback)"
+       NARR="fallback only (no manim-voiceover)"; fi
+  if [ $FONTS -eq 1 ]; then
+    echo "[renderer fonts]"
+    "${RUN[@]}" sh -c 'fc-list : family 2>/dev/null | sort -u' | sed 's/^/  /'
+  fi
 fi
 
 echo "[narration: Kokoro at $KOKORO_BASE_URL, model $KOKORO_MODEL, voice $KOKORO_VOICE]"
@@ -83,7 +98,8 @@ kcurl() {
 }
 CODE="$(kcurl -s -o /dev/null -w '%{http_code}' --max-time 5 "$KOKORO_BASE_URL/models" 2>/dev/null)"
 if [ "$CODE" = 200 ]; then ok "Kokoro reachable ($KOKORO_BASE_URL/models -> 200)"
-else warn "Kokoro not reachable ($KOKORO_BASE_URL/models -> ${CODE:-no answer}); narrated videos will not work"; fi
+else warn "Kokoro not reachable ($KOKORO_BASE_URL/models -> ${CODE:-no answer}); narrated videos will not work"
+     NARR="NOT READY (TTS server unreachable)"; fi
 if [ $TTS_TEST -eq 1 ] && [ "$CODE" = 200 ]; then
   TMP="$(mktemp --suffix=.mp3)"
   HTTP="$(kcurl -s -o "$TMP" -w '%{http_code}' --max-time 60 -H 'Content-Type: application/json' \
@@ -92,10 +108,10 @@ if [ $TTS_TEST -eq 1 ] && [ "$CODE" = 200 ]; then
   if [ "$HTTP" = 200 ] && works ffprobe; then
     D="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$TMP" 2>/dev/null)"
     ok "TTS test clip: ${D:-?}s of audio"
-  else warn "TTS test failed (HTTP $HTTP)"; fi
+  else warn "TTS test failed (HTTP $HTTP)"; NARR="NOT READY (TTS test failed)"; fi
   rm -f "$TMP"
 fi
 
 echo
 if [ $FAILS -gt 0 ]; then echo "RESULT: NOT READY ($FAILS fail, $WARNS warn). Fix the FAIL lines (scripts/setup_env.sh)."; exit 1; fi
-echo "RESULT: READY for silent rendering ($WARNS warn)."
+echo "RESULT: READY for silent rendering ($WARNS warn). Narration: ${NARR:-READY (manim-voiceover + Kokoro)}."

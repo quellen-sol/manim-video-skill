@@ -21,7 +21,7 @@ manim-video-skill/
 │   │                               intuition rubric, narration, troubleshooting, environment
 │   ├── scripts/                    check_env.sh, setup_env.sh, render.sh, frames.py, qa_check.py,
 │   │                               manim_qa.py (LayoutGuard), kokoro_service.py, narrate_mux.py,
-│   │                               narration_timeline.py, docker/Dockerfile
+│   │                               narration_timeline.py, _env.sh, _ffbin.py, docker/Dockerfile
 │   └── templates/                  storyboard, review log, silent and narrated scenes, narration.json
 ├── examples/                       the five test prompts run through the full loop
 └── tests/                          validate_skill.py, check_patterns.py, api_smoke.py
@@ -90,11 +90,23 @@ Details: `skills/manim-video/references/environment.md`.
 To load only the key from an env file without exposing other variables:
 `export KOKORO_API_KEY="$(sed -n 's/^KOKORO_API_KEY=//p' /path/to/secrets.env)"`.
 
-## Examples
+## Examples (the test prompts)
 
-`examples/` holds the five test prompts, each with the prompt, storyboard, final scene code,
-inspection stills, and notes on the bugs found and fixed. Videos are not committed; rebuild them
-with `render.sh final examples/<name>/scene.py <Scene>`. See `examples/README.md`.
+`examples/` holds the five test prompts, each run through the full loop by a fresh agent that
+had only the skill: prompt, storyboard, final scene code, review log, inspection stills, and
+notes on the bugs found and fixed. Videos are not committed (on the nucbox they are in `out/`);
+rebuild them with `render.sh final examples/<name>/scene.py Explainer`.
+
+| Prompt | Narration | Previews | Final (1080p60) | Rubric |
+|---|---|---|---|---|
+| unit circle and the six trig functions | silent | 3 | 138.9 s | 20/20 |
+| modern LLM weights and neurons | silent | 5 | 150.0 s | 19/20 |
+| git: commit, branch, merge, rebase, conflicts, teams | silent | 6 | 139.0 s | 20/20 |
+| Fourier series as epicycles | silent | 2 | 129.5 s | 20/20 |
+| gradient descent and backprop | Kokoro via manim-voiceover | 6 | 158.2 s | 20/20 |
+
+All five pass `qa_check.py`. Known small flaws and the lessons folded back into the skill are
+listed in `examples/README.md`.
 
 ## Development
 

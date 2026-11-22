@@ -47,7 +47,7 @@ def ffmpeg_filter(video: Path, args: list[str]) -> str:
 def merge(intervals: list[tuple[float, float]]) -> list[tuple[float, float]]:
     out: list[tuple[float, float]] = []
     for s, e in sorted(intervals):
-        if out and s <= out[-1][1] + 0.05:
+        if out and s <= out[-1][1] + 0.001:
             out[-1] = (out[-1][0], max(out[-1][1], e))
         else:
             out.append((s, e))
@@ -110,8 +110,11 @@ def main() -> None:
     if astreams:
         a = astreams[0]
         adur = float(a.get("duration") or duration)
-        if abs(adur - duration) > 0.75:
-            add("WARN", "audio", f"audio lasts {adur:.2f}s but video lasts {duration:.2f}s")
+        if adur > duration + 0.5:
+            add("WARN", "audio", f"audio lasts {adur:.2f}s but video only {duration:.2f}s: narration is cut off")
+        elif adur < duration - 8:
+            add("WARN", "audio", f"audio ends at {adur:.2f}s, {duration - adur:.1f}s before the video ends "
+                                 f"(long silent tail?)")
         vol = ffmpeg_filter(video, ["-map", "0:a:0", "-af", "volumedetect"])
         mean = re.search(r"mean_volume: (-?[\d.]+) dB", vol)
         peak = re.search(r"max_volume: (-?[\d.]+) dB", vol)
@@ -149,7 +152,7 @@ def main() -> None:
 
     # holds -------------------------------------------------------------------------------
     long_hold = args.long_hold or (12.0 if narrated else 6.0)
-    out = ffmpeg_filter(video, ["-map", "0:v:0", "-vf", "freezedetect=n=0.0005:d=0.4"])
+    out = ffmpeg_filter(video, ["-map", "0:v:0", "-vf", "freezedetect=n=0.0001:d=0.4"])
     fs = [float(x) for x in re.findall(r"freeze_start: ([\d.]+)", out)]
     fe = [float(x) for x in re.findall(r"freeze_end: ([\d.]+)", out)]
     fe += [duration] * (len(fs) - len(fe))

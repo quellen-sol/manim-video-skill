@@ -43,6 +43,19 @@ full log is under `<project>/media/logs/`.
 | Narration: connection refused to the TTS server | The server must listen on an address the container can reach. `render.sh` maps `127.0.0.1`/`localhost` to `host.docker.internal`, which only works if the server listens on all interfaces (Docker port published on `0.0.0.0`). Otherwise set `KOKORO_BASE_URL` to an address reachable from the container. |
 | Image not found | `scripts/setup_env.sh` pulls `manimcommunity/manim:v0.22.1` and builds `manim-video:0.22.1`. |
 
+## frames.py and qa_check.py
+
+- `frames.py: WARNING ... partial movie files are missing`: Manim deletes partial movies beyond
+  `max_files_cached` (default 100). `render.sh` raises the limit; renders made without it fall
+  back to evenly spaced frames. Re-render with `render.sh` for per-animation stills.
+- `render.sh still` keeps every still under `media/stills/` with a timestamp; `frames.py` writes
+  each run to a new timestamped folder.
+- `qa_check.py` `holds` warnings for stretches where something small is moving: thin strokes and
+  small text barely change pixels at 480p. Check the frames at that time; if motion is visible,
+  note it as a false positive.
+- Stopping a render: Ctrl-C (or killing `render.sh`) also stops its container. If a container
+  named `manim-video-...` is still running after a crash, report it rather than leaving it.
+
 ## ffmpeg and ffprobe
 
 - `frames.py`/`qa_check.py` say no working ffmpeg: a system ffmpeg can be installed but broken
@@ -56,6 +69,9 @@ full log is under `<project>/media/logs/`.
 |---|---|
 | `NameError: ShowCreation` (or `TexText`, `CONFIG`...) | ManimGL idiom; see the table in `api-cheatsheet.md`. |
 | `ValueError: zip() argument 2 is shorter than argument 1` | An `always_redraw`/updater object was animated (FadeOut, Transform). Call `m.clear_updaters()` first. |
+| `TypeError: cannot pickle '_thread.lock' object` | An updater is a bound method (`add_updater(self.follow)`); use a lambda or a plain function. |
+| Letters scramble during a text change | `Transform` between different strings; fade old out, then new in (scene pattern 11). |
+| An object reused after `Uncreate` is invisible | `Uncreate` collapses it to zero size; create a new object. |
 | An object comes back after `FadeOut` | It has an updater or is redrawn; clear updaters and `self.remove` it. |
 | Two copies after a transform | `Transform(a, b)` keeps `a` on screen (looking like `b`); do not also add `b`. Or use `ReplacementTransform`. |
 | `TypeError: ... got multiple values` in `self.play` | Passing a method and arguments (old style). Use `m.animate.method(args)`. |

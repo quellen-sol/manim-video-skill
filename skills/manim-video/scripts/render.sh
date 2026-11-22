@@ -77,9 +77,39 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 LOG="$PROJECT_DIR/media/logs/$STEM-$MODE-$STAMP.log"
 MARKER="$PROJECT_DIR/media/.render-$STAMP-$$"
 touch "$MARKER"
-trap 'rm -f "$MARKER"' EXIT
+CONTAINER="manim-video-$STAMP-$$"
+cleanup() {
+  rm -f "$MARKER"
+  # If this script is interrupted, do not leave the render container running.
+  if [ "${BACKEND:-}" = docker ] && docker ps -q --filter "name=^$CONTAINER\$" 2>/dev/null | grep -q .; then
+    docker kill "$CONTAINER" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
 
-MANIM_ARGS=(manim "${QFLAGS[@]}" --progress_bar none "$REL" "${SCENES[@]}")
+# Manim keeps only 100 partial movies by default and deletes older ones, which breaks
+# frames.py's per-animation timing for longer scenes. The limit has no CLI flag, and a
+# --config_file replaces the project's manim.cfg, so write a merged copy with the limit raised.
+CFG="media/manim-video.cfg"
+python3 - "$PROJECT_DIR/manim.cfg" "$PROJECT_DIR/$CFG" <<'PY'
+import configparser, os, sys
+cp = configparser.ConfigParser(interpolation=None)
+if os.path.exists(sys.argv[1]):
+    cp.read(sys.argv[1])
+if not cp.has_section("CLI"):
+    cp.add_section("CLI")
+cp.set("CLI", "max_files_cached", "100000")
+with open(sys.argv[2], "w") as f:
+    cp.write(f)
+PY
+
+MANIM_ARGS=(manim "${QFLAGS[@]}" --progress_bar none --config_file "$CFG" "$REL" "${SCENES[@]}")
+# Narrated scenes: reusing cached partial movies lets the picture drift from the audio, so
+# always re-render them (the TTS clips stay cached in media/voiceovers/).
+if [ "$NETWORK" = tts ] && [[ " ${EXTRA[*]:-} " != *" --disable_caching "* ]]; then
+  MANIM_ARGS+=(--disable_caching)
+fi
 [ ${#EXTRA[@]} -gt 0 ] && MANIM_ARGS+=("${EXTRA[@]}")
 
 START=$(date +%s)
@@ -90,7 +120,7 @@ if [ "$BACKEND" = docker ]; then
     echo "render.sh: no Manim image found ($MANIM_IMAGE or $MANIM_BASE_IMAGE). Run scripts/setup_env.sh." >&2
     exit 3
   fi
-  DARGS=(run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e COLUMNS=200
+  DARGS=(run --rm --name "$CONTAINER" --user "$(id -u):$(id -g)" -e HOME=/tmp -e COLUMNS=200
          -e PYTHONPATH=/skill/scripts -e PYTHONDONTWRITEBYTECODE=1
          -v "$PROJECT_DIR:/manim" -v "$SCRIPTS_DIR:/skill/scripts:ro" -w /manim)
   if [ "$NETWORK" = tts ]; then
@@ -118,9 +148,15 @@ set -e
 ELAPSED=$(( $(date +%s) - START ))
 
 # Surface warnings from manim_qa.LayoutGuard and narration_timeline.Timeline, if the scene uses them.
-if grep -qE 'LAYOUT|NARRATION' "$LOG"; then
+if grep -q 'LAYOUT-GUARD active' "$LOG"; then
+  echo "render.sh: layout guard active"
+elif grep -q 'LayoutGuard' "$PROJECT_DIR/$REL"; then
+  echo "render.sh: WARNING the scene mentions LayoutGuard but it did not run (import failed, or not mixed in first)"
+fi
+if grep -qE '^.*(LAYOUT [^-]|LAYOUT$|NARRATION)' "$LOG"; then
   echo "---- scene warnings (LayoutGuard / Timeline) ----"
-  grep -hE 'LAYOUT|NARRATION' "$LOG" | sed -E 's/^.*(LAYOUT|NARRATION)/\1/' | awk '!seen[$0]++' | head -60
+  grep -hE 'LAYOUT |NARRATION' "$LOG" | grep -v 'LAYOUT-GUARD' | sed -E 's/^.*(LAYOUT|NARRATION)/\1/' \
+    | awk '!seen[$0]++' | head -80
 fi
 
 if [ $RC -ne 0 ]; then
@@ -137,7 +173,14 @@ FOUND=0
 while IFS= read -r f; do
   FOUND=1
   case "$f" in
-    *.png) echo "IMAGE: $f" ;;
+    *.png)
+      if [ "$MODE" = still ]; then
+        # Manim reuses one file name per scene; keep every still for before/after comparisons.
+        mkdir -p "$PROJECT_DIR/media/stills"
+        KEEP="$PROJECT_DIR/media/stills/$(basename "${f%.png}")-$STAMP.png"
+        cp "$f" "$KEEP"; f="$KEEP"
+      fi
+      echo "IMAGE: $f" ;;
     *)
       INFO=""
       if works ffprobe; then
@@ -147,5 +190,6 @@ while IFS= read -r f; do
       echo "VIDEO: $f${INFO:+  [w h fps dur: $INFO]}" ;;
   esac
 done < <(find "$PROJECT_DIR/media" -newer "$MARKER" -type f \( -name '*.mp4' -o -name '*.mov' -o -name '*.webm' -o -name '*.gif' -o -name '*.png' \) \
-           -not -path '*/partial_movie_files/*' -not -path '*/Tex/*' -not -path '*/texts/*' 2>/dev/null | sort)
+           -not -path '*/partial_movie_files/*' -not -path '*/Tex/*' -not -path '*/texts/*' -not -path '*/stills/*' \
+           -not -path '*/frames_*' 2>/dev/null | sort)
 [ $FOUND -eq 1 ] || echo "render.sh: render succeeded but no new output file was found under $PROJECT_DIR/media" >&2

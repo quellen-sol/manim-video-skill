@@ -94,22 +94,31 @@ Start from [templates/scene_silent.py](templates/scene_silent.py) or
 [references/api-cheatsheet.md](references/api-cheatsheet.md) for the API.
 
 - One `Scene` class for the whole video, with one method per beat (`def beat_unit_circle(self)`).
-  Mix in the layout checker: `class Explainer(LayoutGuard, Scene)`. It logs clipped, off-screen
-  and overlapping text after every animation.
+  Mix in the layout checker: `class Explainer(LayoutGuard, Scene)`. After every animation it logs
+  clipped, off-screen, overlapping or line-crossed text, text outside the safe area, and at the
+  end whatever never left the screen.
 - Put the colour legend at the top of the file as constants and use only those.
-- **Layout:** keep everything inside the safe area (x within ±6.4, y within ±3.4). Position with
+- **Layout:** keep everything inside the safe area (x within ±6.5, y within ±3.5). Position with
   `next_to`, `arrange`, `to_edge(buff=0.5)` and `align_to`, not hard-coded coordinates. Reserve
-  zones: title band at the top, main diagram in the middle, formulas to the side.
+  zones: title band at the top, main diagram in the middle, formulas to the side. Keep captions
+  under 12 units wide.
 - **Text:** `Text` for words (set the font as the template does), `MathTex` for maths (needs
   LaTeX, available in the Docker image). Sizes: titles 40 to 48, labels at least 28, never below
-  24. At most two lines per text object.
+  24; maths about 4 points larger than the words beside it. At most two lines per text object.
+- **Swapping text:** never fade old and new text in the same `play`, and never `Transform` one
+  string into a different one (both look garbled mid-transition): fade the old out, then the new
+  in (the template's `swap` helper, pattern 11).
+- **Highlighting:** `Indicate` stretches lines and `Circumscribe` reads as a glitch in stills.
+  Flash a segment with `ShowPassingFlash(line.copy().set_stroke(YELLOW, width=8))`; box a
+  formula with `SurroundingRectangle` (create, hold, fade).
 - **Lifecycle:** every object that appears must leave (`FadeOut`) or be deliberately kept for the
   next beat. Clear the stage between chapters. With `Transform(a, b)`, keep animating `a`
   afterwards (it now looks like `b`); with `ReplacementTransform(a, b)`, use `b`. Mixing these
   up leaves ghost copies.
 - **Live diagrams:** drive moving values with `ValueTracker` and rebuild dependent shapes with
-  `always_redraw`, so labels and lines stay attached. Remove updaters (or the redrawn objects)
-  when the beat ends.
+  `always_redraw`, so labels and lines stay attached. Updaters must be lambdas or plain functions,
+  never bound methods (`add_updater(self.place)` crashes the render). Call `clear_updaters()`
+  before you fade or transform a redrawn object, and remove it when the beat ends.
 - **Timing:** `run_time` 1 to 2 s for most animations, `self.wait(1)` to `self.wait(2)` after
   each key reveal, `LaggedStart` for groups. The total should match the storyboard.
 - **Determinism:** no unseeded randomness; no network access in silent scenes.
@@ -120,9 +129,13 @@ Start from [templates/scene_silent.py](templates/scene_silent.py) or
 "$SKILL_DIR/scripts/render.sh" preview scene.py Explainer
 ```
 
-This renders 854x480 at 15 fps (seconds to a minute or two) and prints `VIDEO: <path>` plus any
-`LAYOUT` warnings. Fix render errors first ([references/troubleshooting.md](references/troubleshooting.md)).
-To iterate on one section, render only some animations: `render.sh preview scene.py Explainer -- -n 12,20`.
+This renders 854x480 at 15 fps (seconds to a few minutes) and prints `VIDEO: <path>`, whether the
+layout guard ran, and any `LAYOUT` warnings (`CLIPPED`, `UNSAFE`, `OFFSCREEN`, `OVERLAP`,
+`CROSSED`, `END`). Treat each warning as a bug unless you can see it is intended (then
+`self.qa_ignore(mob)`). Fix render errors first
+([references/troubleshooting.md](references/troubleshooting.md)). After the first preview, update
+the storyboard's times to match the real length. To iterate on one section, render only some
+animations: `render.sh preview scene.py Explainer -- -n 12,20`.
 
 ## Step 4: watch it (mandatory)
 
@@ -130,14 +143,18 @@ To iterate on one section, render only some animations: `render.sh preview scene
    `python3 "$SKILL_DIR/scripts/qa_check.py" <video> [--expect-audio | --expect-silent]`.
    It reports empty-screen stretches, stalls, abrupt pop-ins or flicker, audio problems and
    stream sanity. Treat every FAIL as a bug; explain or fix every WARN.
-2. Extract stills: `python3 "$SKILL_DIR/scripts/frames.py" <video> --beats --mid`.
+2. Extract stills: `python3 "$SKILL_DIR/scripts/frames.py" <video> --anims --mid`.
    This saves the resting frame after every animation (and the midpoint of each transition),
-   contact sheets `sheet_NN.png`, and `index.txt` mapping tiles to times and beats.
-3. **Open and look at every contact sheet image**, then open the full-size still for any beat
-   where text is small, objects are close together, or something looks off. Judge small text at
-   full resolution: `render.sh still scene.py Explainer -- -n 0,K` renders the frame after
-   animation K at 1920x1080.
-4. Go through [references/visual-qa-checklist.md](references/visual-qa-checklist.md) beat by
+   contact sheets `sheet_NN.png`, and `index.txt` mapping tiles to times and animation numbers,
+   in a new timestamped folder per run (earlier runs stay for before/after comparisons).
+3. **Open and look at the contact sheet images.** First preview: every sheet. Later previews:
+   the sheets for what you changed (`--from S --to S` limits a run to a time window) plus a
+   quick overview of the whole video (`--count 16`). Open the full-size still for any frame
+   where text is small, objects are close together, or something looks off.
+4. **Check the busiest 2 or 3 frames at full resolution every iteration:** the 480p preview hides
+   collisions of a few pixels. `render.sh still scene.py Explainer -- -n 0,K` renders the frame
+   after animation K (the `anim K` number in `index.txt`) at 1920x1080.
+5. Go through [references/visual-qa-checklist.md](references/visual-qa-checklist.md) beat by
    beat: overlaps, clipping, off-screen content, leftovers that never leave, unreadable text,
    LaTeX glitches, wrong or inconsistent colours, flicker or pop-ins, and pacing. Log every
    finding in `review.md` (from [templates/review.md](templates/review.md)) with its beat and time.
@@ -155,7 +172,8 @@ an overlap.
 ## Step 6: fix and re-render, until you are confident the user will approve
 
 Fix every bug and every rubric item below 2 that a change can fix, then go back to Step 3.
-Re-watch at least the changed beats and the full contact sheet each time. Stop iterating when:
+Each time, re-watch the changed beats (stills and full-resolution frames) and an overview of the
+whole video. Stop iterating when:
 
 - no open visual bugs remain in `review.md`,
 - `qa_check.py` reports no FAIL, and every WARN is explained,
@@ -164,7 +182,9 @@ Re-watch at least the changed beats and the full contact sheet each time. Stop i
 
 **Cap:** 6 preview iterations. If it is still not right by then, stop, render nothing final, and
 report to the user what remains and what you would try next. Never ship a known-broken video
-silently.
+silently. A fix that changes a single static frame (a nudged label) may be verified with a
+full-resolution `render.sh still` instead of a whole preview; anything that changes motion or
+timing needs a preview.
 
 ## Step 7: final render and report
 
@@ -174,9 +194,10 @@ python3 "$SKILL_DIR/scripts/qa_check.py" <final.mp4> --expect-res 1920x1080 [--e
 python3 "$SKILL_DIR/scripts/frames.py" <final.mp4> --count 8
 ```
 
-Look at the final contact sheet once more (high resolution can reveal thin strokes or tiny text
-that the preview hid). Then deliver: the absolute path of the MP4, its duration and resolution,
-and the final report from `review.md`: assumptions (including the narration choice), the
+Look at the final contact sheet once more, and open 2 or 3 of its frames at full size (high
+resolution can reveal thin strokes or tiny text that the preview hid). If the final shows a bug,
+go back to Step 6 (it counts as an iteration) and render the final again. Then deliver: the
+absolute path of the MP4, its duration and resolution, and the final report from `review.md`: assumptions (including the narration choice), the
 storyboard in one paragraph, iterations used, bugs found and fixed, what was checked
 (automated and visual), rubric scores, and known limitations.
 
@@ -188,12 +209,15 @@ storyboard in one paragraph, iterations used, bugs found and fixed, what was che
 - Use manim-voiceover with the bundled Kokoro service (`templates/scene_narrated.py`):
   `self.set_speech_service(KokoroService())`, then animate inside
   `with self.voiceover(text=...) as tracker:` using `run_time=tracker.duration`, so the animation
-  follows the audio. `render.sh` gives the renderer network access to the TTS server only for
-  narrated scenes.
+  follows the audio. Use one `voiceover` block per clause that has its own visual change, rather
+  than splitting one long sentence by guessed fractions. `render.sh` gives the renderer network
+  access to the TTS server and disables Manim's animation cache (which lets the picture drift
+  from the audio) only for narrated scenes.
 - If manim-voiceover is unavailable, use the fallback: `scripts/narrate_mux.py` synthesizes one
   WAV per beat, measures it, and muxes the clips after rendering.
-- In Step 4, run `qa_check.py --expect-audio` and listen-check by reading the clip list: every
-  beat's narration must start while its visual is on screen.
+- In Step 4, run `qa_check.py --expect-audio`, then check sync with the subtitle file that
+  manim-voiceover writes next to the video: `frames.py <video> --cues` takes one still in the
+  middle of every sentence, labelled with its text, so you can see each sentence's visual.
 - Settings: `KOKORO_BASE_URL` (default `http://127.0.0.1:8880/v1`), `KOKORO_MODEL` (`kokoro`),
   `KOKORO_VOICE` (`af_heart`), optional `KOKORO_API_KEY`. Details and timing patterns:
   [references/narration.md](references/narration.md).
@@ -202,12 +226,12 @@ storyboard in one paragraph, iterations used, bugs found and fixed, what was che
 
 | Path | Use |
 |---|---|
-| `scripts/check_env.sh` | read-only check of renderer, LaTeX, ffmpeg, Python, Kokoro (`--tts` for a test clip) |
+| `scripts/check_env.sh` | read-only check of renderer, LaTeX, ffmpeg, Python, Kokoro (`--tts` test clip, `--fonts`) |
 | `scripts/setup_env.sh` | user-space install: static ffmpeg, Docker image with manim-voiceover |
 | `scripts/render.sh` | `preview`, `final` or `still` render; prints `VIDEO:`/`IMAGE:` paths and layout warnings |
 | `scripts/qa_check.py` | headless checks: streams, audio, empty screen, stalls, pop-ins and flicker |
-| `scripts/frames.py` | stills at every beat, evenly spaced or at given times, plus contact sheets |
-| `scripts/manim_qa.py` | `LayoutGuard` scene mixin: clipped, off-screen and overlapping text |
+| `scripts/frames.py` | stills per animation, evenly spaced, at given times, per hold or per subtitle cue, plus contact sheets |
+| `scripts/manim_qa.py` | `LayoutGuard` scene mixin: clipped, unsafe, off-screen, overlapping and crossed text, leftovers |
 | `scripts/kokoro_service.py` | `KokoroService` for manim-voiceover |
 | `scripts/narrate_mux.py`, `scripts/narration_timeline.py` | narration fallback: WAV per beat, timeline, mux |
 | `references/api-cheatsheet.md` | Manim Community API, ManimGL translation table |

@@ -25,9 +25,12 @@ jobs/<slug>/                 any path you like; one directory per video
     │                            plus LayoutGuard and Timeline warnings
     ├── geometry.json            GeometryGuard's measurements: every tracked object's box and
     │                            centre after every animation, and every rule result
+    ├── geometry-check.txt/.json from --geometry (a dry run of the scene: no frames)
     ├── stills/sheet_NN.png      contact sheets to look at; stills/frame_*.png full size;
     │                            stills/index.txt maps tiles to times and beats
     ├── frames/                  extra stills from `--frames` (below)
+    ├── stills-full/             full-resolution PNGs from `--still K`, one per call, UTC-stamped;
+    │                            kept across renders for before/after comparison
     ├── render.log               the full Manim/ffmpeg log
     ├── summary.json             machine-readable summary (status, paths, timings, GPU)
     └── media/                   Manim's cache (re-renders only redo changed animations)
@@ -65,9 +68,11 @@ work. It runs as your uid and gid, so everything in `out/` belongs to you.
 | `narration.kokoro.base_url` | `http://host.docker.internal:8880/v1` | OpenAI-compatible TTS endpoint; `127.0.0.1`/`localhost` are rewritten to the host |
 | `narration.kokoro.model` | `"kokoro"` | TTS model |
 | `requirements` | `[]` | extra pip packages, e.g. `["sympy==1.13.3"]`; installed once into `out/.pydeps/` (needs network, so the job gets it) |
-| `stills` | `"auto"` | `auto` (beat stills for preview, 8 even stills for final), `beats`, `count:N`, `none` |
+| `animations` | all | render only animations A to B, e.g. `"12,20"` (0-based, as in `index.txt`); same as `--animations 12,20` |
+| `stills` | `"auto"` | `auto` (one still per animation plus midpoints for preview, 8 even stills for final), `anims` (alias `beats`), `count:N`, `none` |
 | `checks` | `{}` | `light_bg` (true for light themes), `min_duration`, `max_duration` (seconds) |
-| `timeout` | `3600` | render time limit in seconds |
+| `cache` | `true` | `false` re-renders every animation (`--disable_caching`): use it when a fix does not show up, because Manim's cache key misses some changes (e.g. swapping one rate function for another). Narrated jobs never use the cache |
+| `timeout` | `7200` | render time limit in seconds (a 1080p60 final of a 2 to 3 minute video takes 15 to 30 minutes on 4 cores) |
 
 Unknown keys are an error (typos fail fast). Keys that start with `_` are comments.
 
@@ -78,6 +83,7 @@ R="$SKILL_DIR/scripts/render-in-container.sh"
 "$R" jobs/unit-circle                       # render as job.json says (preview by default)
 "$R" jobs/unit-circle --quality final       # the deliverable, without editing job.json
 "$R" jobs/unit-circle --frames --at 12.5,31 # extra full-size stills from the last render
+"$R" jobs/unit-circle --geometry            # re-measure GeometryGuard rules in seconds (dry run)
 "$R" --doctor [--gpu]                       # versions, fonts, LaTeX, EGL and VA-API in the image
 "$R" --build                                # build or rebuild the image (about 6 min the first time)
 ```
@@ -87,8 +93,19 @@ It prints `VIDEO:`, `SHEET:`, `INDEX:`, `REPORT:` and `LOG:` lines with host pat
 3 Docker or image problem, 4 render failed (the log tail is printed; LaTeX errors are flagged).
 
 The loop: edit `scene.py` (or `job.json`) on the host, run the wrapper again, open `out/report.md`
-and the contact sheets, fix, repeat. Each run replaces the previous video, report and stills;
-Manim's cache in `out/media/` makes re-renders redo only changed animations.
+and the contact sheets, fix, repeat. For a layout fix, `--geometry` checks the rules in seconds
+before you spend minutes on a preview.
+
+Long renders: a 1080p60 final of a 2 to 3 minute video takes 15 to 25 minutes on 4 cores (plus a
+few minutes of checks). If your tool calls time out sooner, run the wrapper in the background
+(`"$R" JOB_DIR --quality final > JOB_DIR/out-wrapper.log 2>&1 &`) and poll `out/summary.json`:
+its `status` is `running` until the job ends, then `ok`, `checks_failed` or `failed`. Ctrl-C or
+SIGTERM to the wrapper stops the render and removes its container.
+
+Each run replaces the previous video, report and stills (copy a video elsewhere to keep it).
+Manim's cache in `out/media/` makes re-renders redo only the animations it sees as changed; if a
+fix does not show up, set `"cache": false` for one render. `--still K` renders the current
+`scene.py`, so after editing the scene, take K from a fresh render's `index.txt`.
 
 If the image is missing, the wrapper builds it. If the skill's scripts or Docker files changed
 since the image was built (it compares a hash stored in an image label), it rebuilds; with the

@@ -110,7 +110,8 @@ Start from [templates/scene_silent.py](templates/scene_silent.py) or
   `within_margin("figure", pct=7)` (at least 7% of the frame on every side) and
   `centered_in("figure", region=(x0, y0, x1, y1))` (centred in its half, panel or the frame).
   They are measured after every animation; nothing on screen may come within 2% of the frame
-  edge. Details: "Geometry" in [references/visual-qa-checklist.md](references/visual-qa-checklist.md).
+  edge. `render-in-container.sh JOB_DIR --geometry` re-measures them in seconds without
+  rendering. Details: "Geometry" in [references/visual-qa-checklist.md](references/visual-qa-checklist.md).
 - Put the colour legend at the top of the file as constants and use only those.
 - **Layout:** keep everything inside the safe area (x within ±6.5, y within ±3.5). Position with
   `next_to`, `arrange`, `to_edge(buff=0.5)` and `align_to`, not hard-coded coordinates. Reserve
@@ -143,8 +144,8 @@ Start from [templates/scene_silent.py](templates/scene_silent.py) or
 "$SKILL_DIR/scripts/render-in-container.sh" ./manim/<slug>      # job.json "quality": "preview"
 ```
 
-This renders 854x480 at 15 fps (seconds to a few minutes), runs the automated checks and
-extracts stills, and prints `VIDEO:`, `SHEET:`, `INDEX:`, `REPORT:` and `LOG:` paths. Exit
+This renders 854x480 at 15 fps (seconds to a few minutes; a 1080p60 final of a 2-minute video
+takes 15 to 25 minutes on 4 cores), runs the automated checks and extracts stills, and prints `VIDEO:`, `SHEET:`, `INDEX:`, `REPORT:` and `LOG:` paths. Exit
 status 4 means the render failed (the log tail is printed; LaTeX errors are flagged); 1 means a
 check FAILed. `out/report.md` says whether the layout guard ran and lists its `LAYOUT` warnings
 (`CLIPPED`, `UNSAFE`, `OFFSCREEN`, `OVERLAP`, `CROSSED`, `END`). Treat each warning as a bug

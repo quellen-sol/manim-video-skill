@@ -15,6 +15,8 @@ Commands:
     manim-job frames [frames.py options]         more stills from the last render, no re-render
                                                  (--at 12.5,30 | --count 24 | --anims --from 20
                                                  --to 40 | --cues) -> out/frames/
+    manim-job geometry                           re-measure GeometryGuard rules without rendering
+                                                 frames (manim --dry_run) -> out/geometry-check.*
     manim-job still K                            PNG at final resolution of the frame after
                                                  animation K (0-based) -> out/stills-full/
     manim-job doctor                             versions, fonts, LaTeX, EGL and VA-API status
@@ -52,7 +54,7 @@ QUALITY = {  # manim flag, default resolution, default fps
 DEFAULT_KOKORO = {"base_url": "http://host.docker.internal:8880/v1", "model": "kokoro"}
 DEFAULT_VOICE = "af_heart"
 TOP_KEYS = {"scene", "file", "quality", "fps", "resolution", "renderer", "gpu", "encode",
-            "narration", "requirements", "stills", "checks", "timeout", "animations"}
+            "narration", "requirements", "stills", "checks", "timeout", "animations", "cache"}
 # ManimGL (3b1b/manim) idioms that fail or misbehave under Manim Community.
 MANIMGL = re.compile(r"\b(manimlib|manimgl|ShowCreation|ShowCreationThenDestruction|TexMobject|TextMobject|"
                      r"GraphScene|InteractiveScene|TexText)\b|^\s*CONFIG\s*=|self\.embed\(|\.fix_in_frame\(")
@@ -191,7 +193,12 @@ def load_job(raw: dict, quality_override: str | None = None, animations_override
         raise JobError('"animations" must look like "12,20" (render animations 12 to 20 only) or "12"')
     job["animations"] = str(a) if a is not None else None
 
-    t = raw.get("timeout", 3600)
+    cache = raw.get("cache", True)
+    if not isinstance(cache, bool):
+        raise JobError('"cache" must be true or false')
+    job["cache"] = cache
+
+    t = raw.get("timeout", 7200)
     if not isinstance(t, (int, float)) or t <= 0:
         raise JobError('"timeout" must be a positive number of seconds')
     job["timeout"] = t
@@ -392,6 +399,12 @@ def geometry_check(log_text: str) -> dict:
             "message": f"all {len(rules)} rule(s) and the frame-edge rule hold over {s.get('animations', 0)} animations"}
 
 
+def host_paths(index: Path) -> None:
+    """index.txt from frames.py names the video by its container path; make it JOB_DIR-relative."""
+    if index.is_file():
+        index.write_text(index.read_text().replace(str(JOB) + "/", "JOB_DIR/"))
+
+
 def tail(path: Path, n: int = 40) -> str:
     lines = path.read_text(errors="replace").splitlines()
     return "\n".join(lines[-n:])
@@ -464,7 +477,77 @@ def cmd_frames(args: list[str]) -> int:
     media = JOB / summary.get("media_video", summary["video"])
     # Per-animation and subtitle-cue modes need Manim's partial-movie list / .srt next to the video.
     src = media if media.is_file() and {"--anims", "--beats", "--cues"} & set(args) else video
-    return subprocess.run([PY, str(HELPERS / "frames.py"), str(src), "--out", str(OUT / "frames"), *args]).returncode
+    r = subprocess.run([PY, str(HELPERS / "frames.py"), str(src), "--out", str(OUT / "frames"), *args],
+                       capture_output=True, text=True)
+    for line in (r.stdout + r.stderr).splitlines():
+        if not line.startswith("SHEET: "):   # the wrapper prints the host paths
+            print(line.replace(str(JOB) + "/", "JOB_DIR/"))
+    host_paths(OUT / "frames" / "index.txt")
+    return r.returncode
+
+
+def cmd_geometry() -> int:
+    """Re-measure the scene's GeometryGuard rules without rendering frames (manim --dry_run)."""
+    try:
+        job = read_job_file()
+    except JobError as e:
+        say(f"bad job: {e}")
+        return 2
+    if refuse_manimgl(JOB / job["file"]):
+        return 2
+    setup_dirs()
+    log_path = OUT / "geometry-check.log"
+    dump = OUT / "geometry-check.json"
+    dump.unlink(missing_ok=True)
+    env = os.environ.copy()
+    env.update(COLUMNS="200", GEOMETRY_JSON=str(dump))
+    with log_path.open("w") as log:
+        if not install_requirements(job, log, env):
+            return 4
+        narr = job["narration"]
+        if narr["enabled"]:
+            env.update(KOKORO_BASE_URL=narr["base_url"], KOKORO_MODEL=narr["model"], KOKORO_VOICE=narr["voice"])
+            try:
+                script_path = narration_script_path(narr)
+            except JobError as e:
+                say(f"bad job: {e}")
+                return 2
+            if script_path is not None:
+                env["NARRATION_SCRIPT"] = str(script_path)
+            if narr["mode"] == "mux":
+                timeline = OUT / "audio" / "timeline.json"
+                if not timeline.is_file():
+                    say("render the job once first (mux narration needs out/audio/timeline.json)")
+                    return 2
+                env["NARRATION_TIMELINE"] = str(timeline)
+        cmd = ["manim", "render", "--dry_run", "-q", job["quality_flag"], "--config_file", str(write_merged_cfg()),
+               "--media_dir", str(OUT / "media"), "--progress_bar", "none", "--renderer", job["renderer"],
+               str(JOB / job["file"]), job["scene"]]
+        say("measuring geometry (dry run: the scene runs, no frames are rendered)")
+        rc = run_logged(cmd, log, env=env, cwd=str(JOB), timeout=job["timeout"])
+    shutil.rmtree(OUT / "tmp", ignore_errors=True)
+    if rc != 0:
+        say(f"geometry run FAILED (exit {rc}). Last lines of out/geometry-check.log:")
+        print(tail(log_path), flush=True)
+        return 4
+    if not dump.is_file():
+        say("no GeometryGuard measurements: mix GeometryGuard into the scene and declare rules")
+        (OUT / "geometry-check.txt").write_text("GeometryGuard not used\n")
+        return 1
+    import geometry_qa   # on PYTHONPATH in the image
+    from contextlib import redirect_stdout
+    import io
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        grc = geometry_qa.main([str(dump)])
+    text = buf.getvalue()
+    (OUT / "geometry-check.txt").write_text(text)
+    print(text, end="", flush=True)
+    data = json.loads(dump.read_text())
+    if grc == 0 and not data.get("rules"):
+        say("GeometryGuard ran but no rules were declared")
+        return 1
+    return grc
 
 
 def cmd_still(k: str) -> int:
@@ -519,7 +602,7 @@ def cmd_still(k: str) -> int:
     if not pngs:
         say("no PNG was written")
         return 4
-    dest = OUT / "stills-full" / f"anim_{k}-{time.strftime('%H%M%S')}.png"
+    dest = OUT / "stills-full" / f"anim_{k}-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.png"
     dest.parent.mkdir(exist_ok=True)
     shutil.copyfile(max(pngs, key=lambda p: p.stat().st_mtime), dest)
     say(f"wrote {dest.relative_to(JOB)}")
@@ -544,6 +627,9 @@ def cmd_render(quality: str | None, animations: str | None = None) -> int:
 
     clean_previous_outputs()
     setup_dirs()
+    (OUT / "summary.json").write_text(json.dumps({"status": "running", "scene": job["scene"],
+                                                  "quality": job["quality"],
+                                                  "started": time.strftime("%Y-%m-%dT%H:%M:%S%z")}) + "\n")
     log_path = OUT / "render.log"
     log = log_path.open("w")
     env = os.environ.copy()
@@ -612,9 +698,10 @@ def cmd_render(quality: str | None, animations: str | None = None) -> int:
     if job["animations"]:
         cmd += ["-n", job["animations"]]
         summary["animations"] = job["animations"]
-    if narr["enabled"]:
-        # Reusing cached partial movies lets the picture drift from the audio; the TTS clips
-        # themselves stay cached in out/media/voiceovers/.
+    if narr["enabled"] or not job["cache"]:
+        # Narrated: reusing cached partial movies lets the picture drift from the audio (the TTS
+        # clips stay cached in out/media/voiceovers/). "cache": false: Manim's cache key can miss
+        # some changes (for example swapping one rate function for another), so a fix may not show.
         cmd.append("--disable_caching")
     cmd += [str(JOB / job["file"]), job["scene"]]
     say(f"rendering {job['file']} {job['scene']}: {job['quality']} {job['width']}x{job['height']} @ "
@@ -720,6 +807,7 @@ def cmd_render(quality: str | None, animations: str | None = None) -> int:
                   if s.startswith("SHEET: ")]
         if r.returncode != 0:
             warnings.append("still extraction failed; see out/render.log")
+        host_paths(OUT / "stills" / "index.txt")
     summary["timings"]["stills"] = round(time.monotonic() - tm, 2)
     summary["stills"] = sheets
 
@@ -731,7 +819,10 @@ def cmd_render(quality: str | None, animations: str | None = None) -> int:
                                                            if job['renderer'] == 'opengl' else ""),
              f"- timings (s): " + ", ".join(f"{k} {v}" for k, v in summary["timings"].items()),
              f"- LayoutGuard: {summary['layout_guard']}; GeometryGuard: {summary['geometry']['status']}",
-             f"- overall check result: **{summary['checks']}**", "", "## Checks", ""]
+             f"- overall check result: **{summary['checks']}**", "", "## Checks", "",
+             f"- bounds: {job['width']}x{job['height']}, duration "
+             f"{job['checks'].get('min_duration', 3.0)}-{job['checks'].get('max_duration', 900.0)} s, "
+             f"{'audio expected' if narr['enabled'] else 'silent expected'}"]
     lines += [f"- {c['level']} {c['check']}: {c['message']}" for c in report.get("checks", [])]
     lines += ["", "## Geometry (GeometryGuard, measured)", "", f"- {geo['message']}"]
     lines += [f"- FAIL {v['rule']} at anims {v['first_anim']}-{v['last_anim']} (t={v['first_t']}-{v['last_t']} s, "
@@ -739,8 +830,10 @@ def cmd_render(quality: str | None, animations: str | None = None) -> int:
     lines += [f"- UNCHECKED {r}: its objects were never on screen together" for r in geo.get("unchecked", [])]
     if geo["status"] != "not used":
         lines.append("- measurements per animation: `out/geometry.json`")
-    if scene_warnings:
-        lines += ["", "## Scene warnings (LayoutGuard / Timeline)", ""] + [f"- {w}" for w in scene_warnings[:60]]
+    lines += ["", "## Layout (LayoutGuard) and narration timing (Timeline)", ""]
+    if summary["layout_guard"] != "active":
+        lines.append(f"- LayoutGuard {summary['layout_guard']}")
+    lines += [f"- {w}" for w in scene_warnings[:60]] or ["- no warnings"]
     if warnings:
         lines += ["", "## Job warnings", ""] + [f"- {w}" for w in warnings]
     lines += ["", "## Stills", ""] + [f"- `{s}`" for s in sheets] + ["- index: `out/stills/index.txt`"]
@@ -774,6 +867,8 @@ def main(argv: list[str]) -> int:
         return cmd_frames(argv[1:])
     if cmd == "still":
         return cmd_still(argv[1] if len(argv) > 1 else "")
+    if cmd == "geometry":
+        return cmd_geometry()
     if cmd == "doctor":
         return cmd_doctor()
     if cmd == "exec":

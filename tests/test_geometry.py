@@ -61,6 +61,12 @@ def unit_tests() -> None:
     check(evaluate([concentric("circle", "nowhere")], fixed, FRAME) == [], "rules with off-screen names are skipped")
     check(evaluate([concentric("circle", (cx, 0))], fixed, FRAME)[0]["ok"], "concentric() accepts a point")
     check(not evaluate([centered_in("figure")], fixed, FRAME)[0]["ok"], "centered_in(frame) fails for a left-half figure")
+    # A group only partly on screen: centring rules wait, margins are still checked.
+    half = {"figure": (FRAME[0] + 0.1, -1, -2, 1)}
+    out = evaluate([centered_in("figure", region=(FRAME[0], FRAME[1], 0, FRAME[3])), within_margin("figure", pct=6)],
+                   half, FRAME, partial={"figure"})
+    check([r["rule"] for r in out] == ["within_margin(figure, 6%)"] and not out[0]["ok"],
+          "partly built group: centred_in skipped, within_margin still enforced")
     title = {"title": (-2.0, 3.0, 2.0, 3.6)}
     check(evaluate([centered_in("title", axis="x")], title, FRAME)[0]["ok"]
           and not evaluate([centered_in("title")], title, FRAME)[0]["ok"], "centered_in(axis='x') checks x only")
@@ -91,6 +97,10 @@ def container_tests() -> None:
                          "symmetric(y_axis, about=circle, axis=y)", "within_margin(figure, 6%)"):
                 check(want in rules, f"{name}: flags {want}")
             check((job / "out" / "geometry.json").is_file(), f"{name}: out/geometry.json written")
+            g = subprocess.run([str(wrapper), str(job), "--geometry"], capture_output=True, text=True)
+            txt = (job / "out" / "geometry-check.txt").read_text() if (job / "out" / "geometry-check.txt").is_file() else ""
+            check(g.returncode == 1 and "4 violation(s)" in txt,
+                  f"{name}: --geometry (dry run, no frames) reproduces the 4 violations")
         else:
             check(res.returncode == 0 and geo.get("status") == "PASS" and not rules,
                   f"{name}: geometry PASS, no violations ({geo.get('message')})")

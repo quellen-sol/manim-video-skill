@@ -198,7 +198,7 @@ class LayoutGuard:
             if message in seen:
                 return
             seen.add(message)
-            print(f"LAYOUT t={t:.1f}s after animation {n}: {message}", flush=True)
+            print(f"LAYOUT t={t:.1f}s after anim {max(n - 1, 0)}: {message}", flush=True)
 
         def sides(b, l, bo, r, t_):
             return "/".join(s for s, d in (("left", l - b[0]), ("bottom", bo - b[1]), ("right", b[2] - r),

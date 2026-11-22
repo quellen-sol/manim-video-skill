@@ -43,6 +43,14 @@ measure them after every animation; `out/report.md` reports them as the `geometr
 - [ ] Every declared rule was checked (no `UNCHECKED` lines) in every layout state the scene
       moves through (re-centre, zoom, panel opens).
 
+How the rules behave: a tracked group is measured as the union of its members on screen (at
+any depth); while it is only partly built, only `within_margin` applies to it, and the centring
+rules wait until all of it is on screen. Retire names when a chapter ends with
+`self.geo_untrack("name")`, or rebind them with `geo_track`. If a group keeps members that are
+never on screen together (a graph whose old nodes were removed), track the visible subset
+(`VGroup(*shown)`), or its centring rules stay `UNCHECKED`. `render-in-container.sh JOB_DIR
+--geometry` re-measures everything in seconds (a dry run, no frames).
+
 A geometry FAIL caps the rubric total at 15 of 20 ([intuition-rubric.md](intuition-rubric.md)).
 The per-animation measurements are in `out/geometry.json` (host route:
 `media/geometry-<Scene>.json`; `python3 scripts/geometry_qa.py FILE` summarises it).

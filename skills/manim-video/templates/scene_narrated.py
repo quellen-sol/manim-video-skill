@@ -20,7 +20,8 @@ except ImportError:  # keeps the file renderable without the skill
     print("LAYOUT-GUARD unavailable: manim_qa/geometry_qa not importable; checks are off", flush=True)
 
     class LayoutGuard:
-        pass
+        def qa_ignore(self, *m):
+            return m[0] if len(m) == 1 else m
 
     class GeometryGuard:
         def geo_track(self, **_):

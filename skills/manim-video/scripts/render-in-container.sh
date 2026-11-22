@@ -7,6 +7,8 @@
 #   render-in-container.sh JOB_DIR --frames [--at T1,T2 | --count N | --anims --from S --to S | --cues]
 #                                              more stills from the last render (no re-render),
 #                                              written to JOB_DIR/out/frames/
+#   render-in-container.sh JOB_DIR --geometry  re-measure the GeometryGuard rules in seconds, without
+#                                              rendering frames -> out/geometry-check.txt/.json
 #   render-in-container.sh JOB_DIR --still K   PNG at final resolution of the frame after animation K
 #                                              (0-based, as in stills/index.txt) -> out/stills-full/
 #   render-in-container.sh --build             build or rebuild the image (manim-video:local)
@@ -35,6 +37,9 @@
 #                    host.docker.internal = the host gateway) or host (fallback if that route is
 #                    blocked, e.g. by a host firewall)
 set -euo pipefail
+# The whole program is one function, called on the last line: bash parses it completely before
+# running, so editing or replacing this file while a render runs cannot break that render.
+main() {
 
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SKILL_DIR="$(dirname "$SCRIPTS_DIR")"
@@ -101,6 +106,7 @@ while [ $# -gt 0 ]; do
     --no-build) NO_BUILD=1; shift ;;
     --build) ACTION=build; shift ;;
     --status) ACTION=status; shift ;;
+    --geometry) ACTION=geometry; shift ;;
     --still) [ $# -ge 2 ] || usage; ACTION=still; STILL_K="$2"; shift 2 ;;
     --doctor) ACTION=doctor; shift ;;
     -h|--help) usage 0 ;;
@@ -166,7 +172,8 @@ new_project() {
 run_service() {
   docker compose --progress quiet -p "$PROJECT" "${COMPOSE_FILES[@]}" run --rm -T manim "$@" &
   CHILD=$!
-  set +e; wait "$CHILD"; local rc=$?; set -e
+  local rc=0
+  wait "$CHILD" || rc=$?   # no set -e toggling here: callers capture the status
   CHILD=""
   return "$rc"
 }
@@ -178,7 +185,7 @@ if [ "$ACTION" = doctor ]; then
   JOB_DIR="$(mktemp -d)"; mkdir -p "$JOB_DIR/out"
   export JOB_DIR
   new_project doctor
-  set +e; run_service doctor; rc=$?; set -e
+  rc=0; run_service doctor || rc=$?
   cleanup; PROJECT=""
   rm -rf "$JOB_DIR"
   exit "$rc"
@@ -222,6 +229,7 @@ WANT_GPU="$J_GPU"; [ -n "$GPU_FLAG" ] && WANT_GPU="$GPU_FLAG"
 if [ "$ACTION" = frames ]; then   # still extraction needs no network, key or GPU
   MANIM_NETWORK=none; J_NARRATION=0; WANT_GPU=0
 fi
+[ "$ACTION" = geometry ] && WANT_GPU=0   # a dry run draws nothing
 [ "$WANT_GPU" = 1 ] && enable_gpu
 
 if [ "$J_NARRATION" = 1 ]; then
@@ -245,17 +253,25 @@ if [ "$ACTION" = frames ]; then
   ARGS=(frames "${FRAME_ARGS[@]}")
 elif [ "$ACTION" = still ]; then
   ARGS=(still "$STILL_K")
+elif [ "$ACTION" = geometry ]; then
+  ARGS=(geometry)
 else
   ARGS=(render); [ -n "$QUALITY" ] && ARGS+=(--quality "$QUALITY"); [ -n "$ANIMS" ] && ARGS+=(--animations "$ANIMS")
 fi
-set +e; run_service "${ARGS[@]}"; RC=$?; set -e
+RC=0; run_service "${ARGS[@]}" || RC=$?
 cleanup; PROJECT=""
 
 OUT="$JOB_DIR/out"
 shopt -s nullglob
 for f in "$OUT"/*.mp4; do echo "VIDEO: $f"; done
 if [ "$ACTION" = still ]; then
-  for f in "$OUT"/stills-full/anim_"$STILL_K"*.png; do echo "IMAGE: $f"; done
+  newest="$(ls -t "$OUT"/stills-full/anim_"$STILL_K"-*.png 2>/dev/null | head -n 1 || true)"
+  [ -n "$newest" ] && echo "IMAGE: $newest"
+  exit "$RC"
+fi
+if [ "$ACTION" = geometry ]; then
+  [ -f "$OUT/geometry-check.txt" ] && echo "GEOMETRY: $OUT/geometry-check.txt"
+  [ -f "$OUT/geometry-check.json" ] && echo "MEASUREMENTS: $OUT/geometry-check.json"
   exit "$RC"
 fi
 if [ "$ACTION" = frames ]; then
@@ -268,3 +284,6 @@ for f in "$OUT"/stills/sheet_*.png; do echo "SHEET: $f"; done
 [ -f "$OUT/report.md" ] && echo "REPORT: $OUT/report.md"
 [ -f "$OUT/render.log" ] && echo "LOG: $OUT/render.log"
 exit "$RC"
+}
+
+main "$@"

@@ -15,8 +15,11 @@ what must hold; GeometryGuard measures bounding boxes after every animation and 
             self.geo_rule(within_margin("figure", pct=7))             # >= 7% of the frame each side
             self.geo_rule(centered_in("figure", region=(-7.1, -4, 0, 4)))  # centred in the left half
 
-A tracked group does not have to be added to the scene itself: if only its members are on screen,
-the box is the union of those members.
+A tracked group does not have to be added to the scene itself: its box is the union of its
+members that are on screen (found at any depth). While a group is only partly on screen (built up
+piece by piece), only within_margin is checked for it; concentric, symmetric and centered_in wait
+until all of it is on screen. self.geo_untrack("name", ...) retires names (and the rules that use
+them) when a chapter ends; geo_track can rebind a name to a new object.
 
 Rules (names are geo_track names; tolerances are in scene units, the frame is about 14.2 x 8):
   concentric(*names, tol=0.1)      bounding-box centres coincide. Two axis lines are concentric
@@ -79,6 +82,7 @@ class Rule:
     """A declared geometric relation. check(boxes, frame) -> (ok, detail)."""
 
     kind = "rule"
+    needs_complete = True  # skip while a named group is only partly on screen
 
     def __init__(self, names, text):
         self.names = [n for n in names if isinstance(n, str)]
@@ -134,6 +138,7 @@ class symmetric(Rule):
 
 class within_margin(Rule):
     kind = "within_margin"
+    needs_complete = False  # what is on screen must keep its margins, complete or not
 
     def __init__(self, name: str, pct: float = 6.0):
         super().__init__([name], f"within_margin({name}, {pct:g}%)")
@@ -183,11 +188,14 @@ def _margin_check(name, b, frame, pct):
     return True, "inside the margins"
 
 
-def evaluate(rules, boxes: dict, frame: Box) -> list[dict]:
-    """Check every rule whose names all have boxes. Pure function (no Manim)."""
+def evaluate(rules, boxes: dict, frame: Box, partial=frozenset()) -> list[dict]:
+    """Check every rule whose names all have boxes. Pure function (no Manim).
+    `partial`: names of groups only partly on screen; rules that need the whole group skip them."""
     out = []
     for r in rules:
         if any(n not in boxes for n in r.names):
+            continue
+        if r.needs_complete and any(n in partial for n in r.names):
             continue
         ok, detail = r.check(boxes, frame)
         out.append({"rule": r.text, "ok": bool(ok), "detail": detail})
@@ -203,6 +211,13 @@ class GeometryGuard:
     def geo_track(self, **named):
         """Name mobjects for the rules (call again to add or replace names)."""
         self.__dict__.setdefault("_geo_named", {}).update(named)
+        return self
+
+    def geo_untrack(self, *names):
+        """Retire names; rules that use them are no longer checked."""
+        named = self.__dict__.setdefault("_geo_named", {})
+        for n in names:
+            named.pop(n, None)
         return self
 
     def geo_rule(self, *rules):
@@ -281,22 +296,29 @@ class GeometryGuard:
             return
         frame = self._geo_frame()
         on_screen = {id(m) for top in self.mobjects for m in top.get_family()}
-        boxes = {}
-        for name, mob in self.__dict__.get("_geo_named", {}).items():
+        def parts_of(mob):
+            """(visible on-screen parts, complete?) for a tracked object, at any depth."""
             if id(mob) in on_screen:
-                parts = [mob] if self._geo_visible(mob) else []
-            else:
-                # A group that was never added as a whole (its members were): measure the
-                # members that are on screen.
-                parts = [m for m in mob.submobjects if id(m) in on_screen and self._geo_visible(m)]
-                if not parts:
-                    parts = [m for m in mob.get_family()[1:]
-                             if id(m) in on_screen and not m.submobjects and self._geo_visible(m)]
+                return ([mob] if self._geo_visible(mob) else []), True
+            if not mob.submobjects:
+                return [], not mob.has_points()   # a drawable leaf that is not on screen
+            parts, complete = [], True
+            for sub in mob.submobjects:
+                p, c = parts_of(sub)
+                parts += p
+                complete = complete and c
+            return parts, complete
+
+        boxes, partial = {}, set()
+        for name, mob in self.__dict__.get("_geo_named", {}).items():
+            parts, complete = parts_of(mob)
             part_boxes = [b for b in (self._geo_box(m) for m in parts) if b is not None]
             if part_boxes:
                 boxes[name] = (min(b[0] for b in part_boxes), min(b[1] for b in part_boxes),
                                max(b[2] for b in part_boxes), max(b[3] for b in part_boxes))
-        results = evaluate(self.__dict__.get("_geo_rules", []), boxes, frame)
+                if not complete:
+                    partial.add(name)
+        results = evaluate(self.__dict__.get("_geo_rules", []), boxes, frame, partial)
         # Default rule: nothing visible on screen near or past the frame edge.
         ignored = self.__dict__.get("_geo_ignored", {})
         fw, fh = frame[2] - frame[0], frame[3] - frame[1]
@@ -313,7 +335,8 @@ class GeometryGuard:
         n = max(getattr(renderer, "num_plays", 1) - 1, 0)
         t = float(getattr(renderer, "time", 0.0))
         snap = {"anim": n, "t": round(t, 2),
-                "objects": {k: {"box": [round(v, 3) for v in b], "centre": [round(c, 3) for c in _centre(b)]}
+                "objects": {k: {"box": [round(v, 3) for v in b], "centre": [round(c, 3) for c in _centre(b)],
+                                **({"partial": True} if k in partial else {})}
                             for k, b in boxes.items()},
                 "results": results}
         self.__dict__.setdefault("_geo_snapshots", []).append(snap)

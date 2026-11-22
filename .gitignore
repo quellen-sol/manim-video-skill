@@ -1,0 +1,12 @@
+# Render output and scratch space: never commit videos or Manim caches.
+out/
+media/
+**/media/
+*.mp4
+*.mov
+*.webm
+frames_*/
+audio/
+__pycache__/
+*.pyc
+.DS_Store

@@ -1,0 +1,10 @@
+{
+  "lead_in": 0.5,
+  "gap": 0.6,
+  "speed": 1.0,
+  "beats": [
+    {"id": "intro", "text": "Start with a circle whose radius is one."},
+    {"id": "point", "text": "Put a point on it, and watch its height as it travels around.", "gap": 1.0},
+    {"id": "recap", "text": "That height, as a function of the angle, is the sine."}
+  ]
+}

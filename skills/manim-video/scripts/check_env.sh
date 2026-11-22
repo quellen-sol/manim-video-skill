@@ -86,6 +86,16 @@ if [ $HOST -eq 1 ]; then
     elif have "$t"; then hfail "$t at $(command -v "$t") does not run (broken install?); setup_env.sh --host fetches a static build"
     else hfail "$t not found (setup_env.sh --host fetches a static build into $MANIM_VIDEO_HOME/bin)"; fi
   done
+  if works ffmpeg && works ffprobe; then
+    # -version only proves the binary loads; encode a short clip to prove it works.
+    T="$(mktemp -d)"
+    if ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=duration=1:size=320x240:rate=30 \
+         -f lavfi -i sine=duration=1 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest "$T/t.mp4" 2>/dev/null \
+       && [ "$(ffprobe -v error -show_entries stream=codec_name -of csv=p=0 "$T/t.mp4" 2>/dev/null | tr '\n' ' ')" = "h264 aac " ]; then
+      ok "ffmpeg encode test: libx264 + aac, read back by ffprobe"
+    else hfail "ffmpeg runs but cannot encode libx264 + aac (setup_env.sh --host fetches a static build)"; fi
+    rm -rf "$T"
+  fi
   M="$(host_manim)"
   if [ -z "$M" ]; then hfail "no host Manim Community ($MANIM_HOST_VENV/bin/manim or manim on PATH): setup_env.sh --host"
   else

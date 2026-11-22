@@ -102,6 +102,15 @@ Start from [templates/scene_silent.py](templates/scene_silent.py) or
   Mix in the layout checker: `class Explainer(LayoutGuard, Scene)`. After every animation it logs
   clipped, off-screen, overlapping or line-crossed text, text outside the safe area, and at the
   end whatever never left the screen.
+- **Geometry (mandatory, measured):** also mix in `GeometryGuard` first
+  (`class Explainer(GeometryGuard, LayoutGuard, Scene)`), name the main figure's parts with
+  `self.geo_track(circle=..., x_axis=..., figure=...)` and declare what must hold with
+  `self.geo_rule(...)`: `concentric("circle", "x_axis", "y_axis")` (same centre; axes cross at it
+  and reach equally far both ways), `symmetric("x_axis", about="circle", axis="x")`,
+  `within_margin("figure", pct=7)` (at least 7% of the frame on every side) and
+  `centered_in("figure", region=(x0, y0, x1, y1))` (centred in its half, panel or the frame).
+  They are measured after every animation; nothing on screen may come within 2% of the frame
+  edge. Details: "Geometry" in [references/visual-qa-checklist.md](references/visual-qa-checklist.md).
 - Put the colour legend at the top of the file as constants and use only those.
 - **Layout:** keep everything inside the safe area (x within ±6.5, y within ±3.5). Position with
   `next_to`, `arrange`, `to_edge(buff=0.5)` and `align_to`, not hard-coded coordinates. Reserve
@@ -147,8 +156,9 @@ animations: `--animations 12,20` (or `"animations": "12,20"` in job.json).
 ## Step 4: watch it (mandatory)
 
 1. Read `out/report.md`: the headless checks already ran (stream sanity, empty-screen
-   stretches, stalls, abrupt pop-ins or flicker, audio, plus the layout warnings). Treat every
-   FAIL as a bug; explain or fix every WARN.
+   stretches, stalls, abrupt pop-ins or flicker, audio, the layout warnings, and the measured
+   **geometry** check with the animation and time of each violation). Treat every FAIL as a bug;
+   explain or fix every WARN. A geometry FAIL is never "intended": fix the layout.
 2. The stills are already extracted in `out/stills/`: the resting frame after every animation
    and the midpoint of each transition, contact sheets `sheet_NN.png`, and `index.txt` mapping
    tiles to times and animation numbers. More, without re-rendering:
@@ -173,7 +183,8 @@ review; rely on the headless checks and ask the user to watch the preview.
 Score the preview against [references/intuition-rubric.md](references/intuition-rubric.md):
 write the newcomer summary (what a first-time viewer would take away) and score each criterion
 0 to 2 in `review.md`. A leap (a step that is not motivated or not shown) is a bug, the same as
-an overlap.
+an overlap. **A geometry FAIL in `out/report.md` (or no geometry rules for the main figure) caps
+the total at 15 of 20.**
 
 ## Step 6: fix and re-render, until you are confident the user will approve
 
@@ -182,7 +193,8 @@ Each time, re-watch the changed beats (stills and full-resolution frames) and an
 whole video. Stop iterating when:
 
 - no open visual bugs remain in `review.md`,
-- `out/report.md` shows no FAIL, and every WARN is explained,
+- `out/report.md` shows no FAIL (geometry included, with no `UNCHECKED` rule), and every WARN is
+  explained,
 - the rubric passes (no criterion at 0, total at least 15 of 20), and
 - you would show it to the user without caveats.
 
@@ -242,6 +254,7 @@ storyboard in one paragraph, iterations used, bugs found and fixed, what was che
 | `scripts/qa_check.py` | headless checks (run for you in the container): streams, audio, empty screen, stalls, pop-ins |
 | `scripts/frames.py` | stills (run for you in the container): per animation, evenly spaced, at times, per hold or subtitle cue |
 | `scripts/manim_qa.py` | `LayoutGuard` scene mixin: clipped, unsafe, off-screen, overlapping and crossed text, leftovers |
+| `scripts/geometry_qa.py` | `GeometryGuard` scene mixin: measured `concentric`, `symmetric`, `within_margin`, `centered_in` rules |
 | `scripts/kokoro_service.py`, `scripts/narration_script.py` | `KokoroService` for manim-voiceover; `line(id)` reads narration from job.json |
 | `scripts/narrate_mux.py`, `scripts/narration_timeline.py` | narration fallback: WAV per beat, timeline, mux |
 | `references/api-cheatsheet.md` | Manim Community API, ManimGL translation table |

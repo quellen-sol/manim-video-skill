@@ -1,16 +1,19 @@
 from manim import *
 from manim_qa import LayoutGuard
+from geometry_qa import GeometryGuard, centered_in, within_margin
 
 Text.set_default(font="Noto Sans")
 
 
-class Smoke(LayoutGuard, Scene):
+class Smoke(GeometryGuard, LayoutGuard, Scene):
     def construct(self):
         title = Text("Container smoke test", font_size=44).to_edge(UP, buff=0.5)
         euler = MathTex(r"e^{i\pi} + 1 = 0", font_size=60)
         integral = MathTex(r"\int_0^1 x^2\,dx = \frac{1}{3}", r"\quad \sum_{n=1}^{\infty} \frac{1}{n^2} = \frac{\pi^2}{6}")
         tex = Tex(r"Text mode: $\alpha + \beta$ and \textbf{bold}", font_size=36)
-        VGroup(euler, integral, tex).arrange(DOWN, buff=0.5).next_to(title, DOWN, buff=0.5)
+        maths = VGroup(euler, integral, tex).arrange(DOWN, buff=0.5).next_to(title, DOWN, buff=0.5)
+        self.geo_track(title=title, maths=maths)
+        self.geo_rule(centered_in("title", axis="x"), within_margin("maths", pct=7))
         self.play(Write(title))
         self.play(Write(euler))
         self.play(FadeIn(integral, shift=UP * 0.3))

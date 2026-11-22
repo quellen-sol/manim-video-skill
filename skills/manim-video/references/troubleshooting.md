@@ -65,9 +65,12 @@ host route, `render.sh` prints the last 60 lines and keeps logs under `<project>
 
 ## ffmpeg and ffprobe
 
-- `frames.py`/`qa_check.py` say no working ffmpeg: a system ffmpeg can be installed but broken
-  (for example `error while loading shared libraries`). `scripts/setup_env.sh` installs a static
-  build into `~/.local/share/manim-video/bin`, which the scripts prefer.
+- Container route: never an issue (the image has its own ffmpeg).
+- Host route, `frames.py`/`qa_check.py` say no working ffmpeg: a system ffmpeg can be installed
+  but broken (for example `error while loading shared libraries`, or a library still being
+  installed). `scripts/setup_env.sh --host` installs a static build into
+  `~/.local/share/manim-video/bin`; the scripts use it only when the system ffmpeg does not run.
+  `check_env.sh --host` runs a real encode test.
 - Manim itself does not need the ffmpeg command (it encodes with PyAV).
 
 ## Manim runtime errors

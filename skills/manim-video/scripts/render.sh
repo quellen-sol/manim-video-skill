@@ -120,6 +120,14 @@ if grep -q 'LAYOUT-GUARD active' "$LOG"; then
 elif grep -q 'LayoutGuard' "$PROJECT_DIR/$REL"; then
   echo "render.sh: WARNING the scene mentions LayoutGuard but it did not run (import failed, or not mixed in first)"
 fi
+# GeometryGuard (geometry_qa.py): measured geometry rules; the dump is media/geometry-<Scene>.json.
+if grep -q 'GEOMETRY-GUARD active' "$LOG"; then
+  echo "---- geometry (GeometryGuard) ----"
+  grep -hE 'GEOMETRY (FAIL|SUMMARY|UNCHECKED|checker-error)' "$LOG" | sed -E 's/^.*(GEOMETRY)/\1/' | head -40
+  echo "render.sh: full list: python3 $SCRIPTS_DIR/geometry_qa.py $PROJECT_DIR/media/geometry-<Scene>.json"
+else
+  echo "render.sh: GeometryGuard not used (SKILL.md Step 2: declare geometry rules for the main figure)"
+fi
 if grep -qE '^.*(LAYOUT [^-]|LAYOUT$|NARRATION)' "$LOG"; then
   echo "---- scene warnings (LayoutGuard / Timeline) ----"
   grep -hE 'LAYOUT |NARRATION' "$LOG" | grep -v 'LAYOUT-GUARD' | sed -E 's/^.*(LAYOUT|NARRATION)/\1/' \

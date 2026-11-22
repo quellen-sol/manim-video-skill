@@ -13,13 +13,29 @@ from manim_voiceover import VoiceoverScene
 
 from kokoro_service import KokoroService  # on PYTHONPATH in the render image (and under render.sh)
 
-try:
+try:  # layout and geometry checkers; on PYTHONPATH in the render image (and under render.sh)
     from manim_qa import LayoutGuard
-except ImportError:
-    print("LAYOUT-GUARD unavailable: manim_qa not importable; layout checks are off", flush=True)
+    from geometry_qa import GeometryGuard, centered_in, concentric, symmetric, within_margin
+except ImportError:  # keeps the file renderable without the skill
+    print("LAYOUT-GUARD unavailable: manim_qa/geometry_qa not importable; checks are off", flush=True)
 
     class LayoutGuard:
         pass
+
+    class GeometryGuard:
+        def geo_track(self, **_):
+            return self
+
+        def geo_rule(self, *_):
+            return self
+
+        def geo_ignore(self, *m):
+            return m[0] if len(m) == 1 else m
+
+    def concentric(*a, **k): return None
+    def symmetric(*a, **k): return None
+    def within_margin(*a, **k): return None
+    def centered_in(*a, **k): return None
 
 config.background_color = "#0F1117"
 Text.set_default(font="Noto Sans")
@@ -31,7 +47,7 @@ C_MUTED = GREY_B
 LABEL_SIZE = 30
 
 
-class Explainer(LayoutGuard, VoiceoverScene):
+class Explainer(GeometryGuard, LayoutGuard, VoiceoverScene):
     def construct(self):
         # Voice, model and server come from KOKORO_VOICE / KOKORO_MODEL / KOKORO_BASE_URL.
         self.set_speech_service(KokoroService())
@@ -41,6 +57,9 @@ class Explainer(LayoutGuard, VoiceoverScene):
 
     def beat_intro(self):
         circle = Circle(radius=2, color=C_MAIN)
+        # Geometry (mandatory, measured): name the main figure and declare what must hold.
+        self.geo_track(circle=circle)
+        self.geo_rule(centered_in("circle"), within_margin("circle", pct=7))
         with self.voiceover(text="Start with a circle whose radius is one.") as tracker:
             self.play(Create(circle), run_time=tracker.duration)
         self.circle = circle

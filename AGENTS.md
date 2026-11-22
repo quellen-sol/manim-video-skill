@@ -17,6 +17,7 @@ When you change the skill:
   `uv pip compile docker/requirements.in --python-version 3.12 --python-platform x86_64-manylinux_2_39 --generate-hashes -o docker/requirements.lock`.
   Never push the image anywhere; it is built locally.
 - Re-run the checks: `python3 tests/validate_skill.py`, `tests/test_container.sh` (end to end),
+  `python3 tests/test_geometry.py` (the geometry checker must still catch the old unit-circle layout),
   `python3 tests/check_patterns.py` (renders every pattern in `references/scene-patterns.md` in
   the container; `--route host` for the host route), and render `tests/api_smoke.py` with
   `skills/manim-video/scripts/render.sh preview tests/api_smoke.py` (copy it under `out/` first).

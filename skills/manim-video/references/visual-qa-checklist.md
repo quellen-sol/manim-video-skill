@@ -23,6 +23,30 @@ equivalents are in brackets.
 5. If a bug might be transient (a flash, a jump), extract frames around it:
    `R JOB_DIR --frames --at 12.0,12.07,12.13,12.2` [`frames.py VIDEO --at ...`].
 
+## 0b. Geometry (mandatory, measured)
+
+Eyeballing a still is not enough for this class of bug: a circle 0.3 units off its axes'
+crossing, or axes that reach 1.1 radii on one side and 2 on the other, look "about right" in a
+contact sheet. Declare the relations with `GeometryGuard` (`scripts/geometry_qa.py`) and let it
+measure them after every animation; `out/report.md` reports them as the `geometry` check.
+
+- [ ] **Concentric** things share a centre: a circle and the crossing of its axes, a ring of
+      nodes and its hub, an epicycle and the tip it rides on: `concentric("circle", "x_axis", "y_axis")`.
+- [ ] **Axes and number lines are symmetric about their origin** (equal reach both ways), or end
+      in an arrowhead or ticks that show why one side is longer: `symmetric("x_axis", about="circle", axis="x")`.
+- [ ] The **main figure is centred in its layout region** (the frame, or its half or panel):
+      `centered_in("figure", region=(x0, y0, x1, y1))`.
+- [ ] **Margins:** the main figure keeps at least 6 to 8% of the frame width/height on every side:
+      `within_margin("figure", pct=7)`. Nothing touches the frame edge (a default 2% rule
+      checks every object on screen).
+- [ ] **Symmetric things look symmetric**: layer stacks, mirrored panels, balanced trees.
+- [ ] Every declared rule was checked (no `UNCHECKED` lines) in every layout state the scene
+      moves through (re-centre, zoom, panel opens).
+
+A geometry FAIL caps the rubric total at 15 of 20 ([intuition-rubric.md](intuition-rubric.md)).
+The per-animation measurements are in `out/geometry.json` (host route:
+`media/geometry-<Scene>.json`; `python3 scripts/geometry_qa.py FILE` summarises it).
+
 ## 1. Layout
 
 - [ ] Nothing is clipped by the frame edge; nothing important sits outside the safe area

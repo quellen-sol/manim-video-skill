@@ -282,7 +282,7 @@ def reencode(src: Path, dst: Path, codec: str, log) -> tuple[int, float]:
 def clean_previous_outputs() -> None:
     for p in OUT.glob("*.mp4"):
         p.unlink()
-    for name in ("report.json", "report.md", "render.log", "summary.json"):
+    for name in ("report.json", "report.md", "render.log", "summary.json", "geometry.json"):
         (OUT / name).unlink(missing_ok=True)
     shutil.rmtree(OUT / "stills", ignore_errors=True)
     shutil.rmtree(OUT / "frames", ignore_errors=True)
@@ -362,6 +362,34 @@ def refuse_manimgl(path: Path) -> bool:
             "See references/api-cheatsheet.md.")
         return True
     return False
+
+
+def geometry_check(log_text: str) -> dict:
+    """Turn GeometryGuard's dump (out/geometry.json) into one check for the report."""
+    path = OUT / "geometry.json"
+    if "GEOMETRY-GUARD active" not in log_text or not path.is_file():
+        return {"status": "not used", "level": "WARN",
+                "message": "GeometryGuard not used: mix it in and declare rules for the main figure "
+                           "(SKILL.md Step 2); the geometry gate needs measurements"}
+    try:
+        dump = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"status": "error", "level": "FAIL", "message": f"cannot read out/geometry.json: {exc}"}
+    s = dump.get("summary") or {}
+    viol, rules = s.get("violations", []), dump.get("rules", [])
+    unchecked = [r for r in rules if r not in s.get("checked_rules", [])]
+    if viol:
+        return {"status": "FAIL", "level": "FAIL", "violations": viol, "unchecked": unchecked,
+                "message": f"{len(viol)} geometry violation(s) over {s.get('animations', 0)} animations "
+                           f"({len(rules)} rule(s) declared, plus the frame-edge rule)"}
+    if not rules:
+        return {"status": "no rules", "level": "WARN", "violations": [], "unchecked": [],
+                "message": "GeometryGuard ran but no rules were declared; only the frame-edge rule was checked"}
+    if unchecked:
+        return {"status": "PASS", "level": "WARN", "violations": [], "unchecked": unchecked,
+                "message": f"{len(unchecked)} declared rule(s) never checked (objects never on screen together)"}
+    return {"status": "PASS", "level": "PASS", "violations": [], "unchecked": [],
+            "message": f"all {len(rules)} rule(s) and the frame-edge rule hold over {s.get('animations', 0)} animations"}
 
 
 def tail(path: Path, n: int = 40) -> str:
@@ -474,6 +502,7 @@ def cmd_still(k: str) -> int:
                     say("render the job once first (mux narration needs out/audio/timeline.json)")
                     return 2
                 env["NARRATION_TIMELINE"] = str(timeline)
+        env["GEOMETRY_JSON"] = str(OUT / "tmp" / "geometry-still.json")
         cmd = ["manim", "render", "-q", "h", "--config_file", str(write_merged_cfg()),
                "--media_dir", str(OUT / "media"), "--progress_bar", "none", "--renderer", job["renderer"],
                "-r", f"{job['width']},{job['height']}", "-s", "-n", f"0,{k}",
@@ -575,7 +604,8 @@ def cmd_render(quality: str | None, animations: str | None = None) -> int:
                 env["NARRATION_TIMELINE"] = str(timeline)
                 summary["timings"]["tts"] = round(time.monotonic() - t0, 2)
 
-    # Render.
+    # Render. GeometryGuard (scripts/geometry_qa.py) dumps its measurements here.
+    env["GEOMETRY_JSON"] = str(OUT / "geometry.json")
     cmd = ["manim", "render", "-q", job["quality_flag"], "--config_file", str(write_merged_cfg()),
            "--media_dir", str(OUT / "media"), "--progress_bar", "none", "--renderer", job["renderer"],
            "--fps", f"{job['fps']:g}", "-r", f"{job['width']},{job['height']}", "--format", "mp4"]
@@ -600,7 +630,8 @@ def cmd_render(quality: str | None, animations: str | None = None) -> int:
     scene_warnings = list(dict.fromkeys(
         re.sub(r"^.*?((LAYOUT|NARRATION)\b)", r"\1", line).strip()
         for line in text.splitlines()
-        if re.search(r"\b(LAYOUT |LAYOUT$|NARRATION)", line) and "LAYOUT-GUARD" not in line))
+        if re.search(r"\b(LAYOUT |LAYOUT$|NARRATION)", line) and "LAYOUT-GUARD" not in line
+        and "GEOMETRY" not in line))
     summary["scene_warnings"] = scene_warnings[:200]
     if "LAYOUT-GUARD active" in text:
         summary["layout_guard"] = "active"
@@ -664,6 +695,12 @@ def cmd_render(quality: str | None, animations: str | None = None) -> int:
         report = {"result": "FAIL", "checks": [{"level": "FAIL", "check": "qa_check",
                                                 "message": (r.stderr or r.stdout).strip()[-500:]}]}
     report["scene_warnings"] = scene_warnings[:200]
+    geo = geometry_check(text)
+    report["geometry"] = geo
+    report.setdefault("checks", []).append({"level": geo["level"], "check": "geometry", "message": geo["message"]})
+    levels = [c["level"] for c in report["checks"]]
+    report["result"] = "FAIL" if "FAIL" in levels else ("WARN" if "WARN" in levels else "PASS")
+    summary["geometry"] = {"status": geo["status"], "violations": len(geo.get("violations", []))}
     (OUT / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     summary["timings"]["checks"] = round(time.monotonic() - tm, 2)
     summary["checks"] = report.get("result", "FAIL")
@@ -693,9 +730,15 @@ def cmd_render(quality: str | None, animations: str | None = None) -> int:
              f"GPU {'on' if gpu['usable'] else 'off'}" + (f" ({summary['gpu'].get('gl_renderer')})"
                                                            if job['renderer'] == 'opengl' else ""),
              f"- timings (s): " + ", ".join(f"{k} {v}" for k, v in summary["timings"].items()),
-             f"- LayoutGuard: {summary['layout_guard']}",
+             f"- LayoutGuard: {summary['layout_guard']}; GeometryGuard: {summary['geometry']['status']}",
              f"- overall check result: **{summary['checks']}**", "", "## Checks", ""]
     lines += [f"- {c['level']} {c['check']}: {c['message']}" for c in report.get("checks", [])]
+    lines += ["", "## Geometry (GeometryGuard, measured)", "", f"- {geo['message']}"]
+    lines += [f"- FAIL {v['rule']} at anims {v['first_anim']}-{v['last_anim']} (t={v['first_t']}-{v['last_t']} s, "
+              f"{v['count']}x): {v['detail']}" for v in geo.get("violations", [])]
+    lines += [f"- UNCHECKED {r}: its objects were never on screen together" for r in geo.get("unchecked", [])]
+    if geo["status"] != "not used":
+        lines.append("- measurements per animation: `out/geometry.json`")
     if scene_warnings:
         lines += ["", "## Scene warnings (LayoutGuard / Timeline)", ""] + [f"- {w}" for w in scene_warnings[:60]]
     if warnings:

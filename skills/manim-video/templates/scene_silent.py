@@ -6,13 +6,29 @@ Host route: "$SKILL_DIR/scripts/render.sh" preview scene.py Explainer
 
 from manim import *
 
-try:  # layout checker; on PYTHONPATH in the render image (and under render.sh)
+try:  # layout and geometry checkers; on PYTHONPATH in the render image (and under render.sh)
     from manim_qa import LayoutGuard
+    from geometry_qa import GeometryGuard, centered_in, concentric, symmetric, within_margin
 except ImportError:  # keeps the file renderable without the skill
-    print("LAYOUT-GUARD unavailable: manim_qa not importable; layout checks are off", flush=True)
+    print("LAYOUT-GUARD unavailable: manim_qa/geometry_qa not importable; checks are off", flush=True)
 
     class LayoutGuard:
         pass
+
+    class GeometryGuard:
+        def geo_track(self, **_):
+            return self
+
+        def geo_rule(self, *_):
+            return self
+
+        def geo_ignore(self, *m):
+            return m[0] if len(m) == 1 else m
+
+    def concentric(*a, **k): return None
+    def symmetric(*a, **k): return None
+    def within_margin(*a, **k): return None
+    def centered_in(*a, **k): return None
 
 # --- style (references/style-guide.md) -----------------------------------------------
 config.background_color = "#0F1117"
@@ -30,7 +46,7 @@ TITLE_SIZE = 44
 LABEL_SIZE = 30
 
 
-class Explainer(LayoutGuard, Scene):
+class Explainer(GeometryGuard, LayoutGuard, Scene):
     def construct(self):
         self.beat_hook()
         self.beat_build()
@@ -64,6 +80,11 @@ class Explainer(LayoutGuard, Scene):
         """Beat 2: build the diagram piece by piece; one idea per beat."""
         shape = Circle(radius=2, color=C_MAIN)
         label = Text("one idea", font_size=LABEL_SIZE, color=C_ACCENT).next_to(shape, DOWN, buff=0.3)
+        # Geometry (mandatory, measured): name the main figure and declare what must hold.
+        # A circle on axes would add: concentric("circle", "x_axis", "y_axis") (axes cross at its
+        # centre AND reach equally far both ways), and region=(-7.1, -4, 0, 4) for a left-half figure.
+        self.geo_track(shape=shape, figure=VGroup(shape, label))
+        self.geo_rule(centered_in("shape"), within_margin("figure", pct=7))
         self.play(Create(shape), run_time=1.5)
         self.play(FadeIn(label, shift=0.2 * UP))
         self.wait(1.5)

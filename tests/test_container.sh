@@ -26,7 +26,11 @@ field() { python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get(sy
 
 rm -rf "$WORK"; mkdir -p "$WORK"
 cp -r "$ROOT/tests/jobs/smoke" "$ROOT/tests/jobs/narrated" "$ROOT/tests/jobs/mux" "$WORK/"
-containers_before="$(docker ps -aq --filter label=com.docker.compose.service=manim | wc -l)"
+# Containers of THIS test's jobs (other renders may run concurrently and are not counted).
+own_containers() {
+  docker ps -a --filter label=com.docker.compose.service=manim --format '{{.Label "com.docker.compose.project"}}' \
+    | grep -cE '^manim-(smoke|smoke-gpu|narrated|mux|gl|doctor)-[0-9]+-[0-9]+$' || true
+}
 networks_before="$(docker network ls -q | sort | tr '\n' ' ')"
 
 # 1. image
@@ -96,8 +100,8 @@ else
 fi
 
 # 7. nothing left behind
-containers_after="$(docker ps -aq --filter label=com.docker.compose.service=manim | wc -l)"
-[ "$containers_after" -eq "$containers_before" ] && pass "no stray containers" || fail "stray containers: $containers_after (before: $containers_before)"
+left="$(own_containers)"
+[ "$left" -eq 0 ] && pass "no stray containers from this test's jobs (docker ps -a)" || fail "stray containers from this test: $left"
 [ "$(docker network ls -q | sort | tr '\n' ' ')" = "$networks_before" ] && pass "no new networks" || fail "network list changed"
 
 echo

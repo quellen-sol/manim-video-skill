@@ -30,13 +30,15 @@ manim-video-skill/
 │   │                               narration, troubleshooting, environment (host route)
 │   ├── scripts/                    render-in-container.sh (the renderer), check_env.sh,
 │   │                               setup_env.sh, render.sh (host route), frames.py, qa_check.py,
-│   │                               manim_qa.py (LayoutGuard), kokoro_service.py, narration_script.py,
+│   │                               manim_qa.py (LayoutGuard), geometry_qa.py (GeometryGuard),
+│   │                               kokoro_service.py, narration_script.py,
 │   │                               narrate_mux.py, narration_timeline.py, _env.sh, _ffbin.py
 │   └── templates/                  job.json, storyboard, review log, silent and narrated scenes,
 │                                   narration.json
 ├── examples/                       the five test prompts run through the full loop
-└── tests/                          validate_skill.py, test_container.sh, check_patterns.py,
-                                    bench_gpu.sh, api_smoke.py, jobs/ (smoke, narrated, mux, bench)
+└── tests/                          validate_skill.py, test_container.sh, test_geometry.py,
+                                    check_patterns.py, bench_gpu.sh, api_smoke.py, jobs/ (smoke,
+                                    narrated, mux, bench, geometry-old/fixed-unit-circle)
 ```
 
 ## Install
@@ -79,7 +81,8 @@ mkdir -p jobs/demo && cp ~/.agents/skills/manim-video/templates/job.json jobs/de
 
 Each run writes `jobs/demo/out/`: `<Scene>-<quality>.mp4`, `report.md`/`report.json` (ffprobe
 streams, resolution, duration, audio, blank-screen and stall detection, pop-ins, LayoutGuard
-warnings), `stills/` (contact sheets, one still per animation, `index.txt`), `render.log` and
+warnings, and the measured geometry check: declared `concentric`/`symmetric`/`within_margin`/
+`centered_in` rules from `scripts/geometry_qa.py`, plus `geometry.json`), `stills/` (contact sheets, one still per animation, `index.txt`), `render.log` and
 `summary.json`. The contract and every `job.json` key: `skills/manim-video/references/container.md`.
 
 - **Image** `manim-video:local` (never pushed): Ubuntu 24.04 by digest, apt from a dated
@@ -147,6 +150,7 @@ listed in `examples/README.md`.
 ```bash
 python3 tests/validate_skill.py   # agentskills.io validator (skills-ref) + portability lint
 tests/test_container.sh           # end to end: build, render, LaTeX, narration, GPU, no strays (~1 min)
+python3 tests/test_geometry.py    # geometry checker: unit tests + the old unit-circle layout must FAIL
 python3 tests/check_patterns.py   # renders every scene in references/scene-patterns.md (container;
                                   #   --route host for the host route)
 tests/bench_gpu.sh                # CPU vs GPU render and encode benchmark (quiet host, ~6 min)

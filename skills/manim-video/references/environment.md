@@ -19,7 +19,7 @@ Check: `scripts/check_env.sh` (add `--host`, `--gpu`, `--tts`, `--fonts`).
 | Manim Community 0.22.1 + manim-voiceover 0.4.0 | in the image, from `docker/requirements.lock` | venv `~/.local/share/manim-video/venv`, same lock file |
 | Python | 3.12.3 | system 3.12.3 |
 | TeX Live 2023, dvisvgm 3.2.1 | in the image | system packages (installed by the owner) |
-| ffmpeg 6.1.1 | in the image | system package; a static build in `~/.local/share/manim-video/bin` is used first if present |
+| ffmpeg 6.1.1 | in the image | system package (works; see container.md); a static build in `~/.local/share/manim-video/bin` is only a fallback |
 | Cairo 1.18, Pango 1.52 | in the image | system `libcairo2-dev`, `libpango1.0-dev` |
 | Kokoro TTS | `host.docker.internal:8880` | `127.0.0.1:8880` |
 

@@ -30,6 +30,13 @@ away. Compare it with the storyboard's learning goal.
 **Pass:** no criterion at 0 and a total of at least 15 of 20. Fix anything at 0 before anything
 else. A 1 that a small change could raise to 2 is worth fixing too.
 
+**Geometry cap (mandatory):** if `out/report.md` shows a geometry FAIL (any GeometryGuard rule
+violated, or the frame-edge rule), or the main figure has no geometry rules at all, the total is
+capped at **15 of 20**, whatever the criteria above add up to. A figure that is off-centre on its
+own axes or crammed against the frame edge reads as sloppy, and eyeballing contact sheets does
+not catch it reliably (an earlier unit-circle video scored 19/20 with exactly that bug). Fix
+the geometry and re-render before scoring above 15.
+
 ## Questions that find leaps
 
 - Where would a newcomer ask "why?" and not get an answer within the next beat?

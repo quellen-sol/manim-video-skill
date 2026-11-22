@@ -21,7 +21,10 @@ jobs/<slug>/                 any path you like; one directory per video
 └── out/                     written by the container; the only writable path
     ├── <Scene>-<quality>.mp4    the video (with audio if narrated)
     ├── report.md, report.json   automated checks: streams, resolution, audio, blank screen,
-    │                            stalls, pop-ins/flicker, plus LayoutGuard and Timeline warnings
+    │                            stalls, pop-ins/flicker, measured geometry (GeometryGuard),
+    │                            plus LayoutGuard and Timeline warnings
+    ├── geometry.json            GeometryGuard's measurements: every tracked object's box and
+    │                            centre after every animation, and every rule result
     ├── stills/sheet_NN.png      contact sheets to look at; stills/frame_*.png full size;
     │                            stills/index.txt maps tiles to times and beats
     ├── frames/                  extra stills from `--frames` (below)
@@ -205,6 +208,18 @@ Size and build time on the nucbox: **1.72 GB**: Ubuntu base 78 MB; one apt layer
 488 MB (Manim, SciPy, NumPy, PyAV with its own ffmpeg, skia-pathops, moderngl); the skill's
 helpers under 0.1 MB. First build from a cold cache: 6 min 8 s (mostly downloads). Later
 builds that change only the helpers take seconds.
+
+## Host ffmpeg on the nucbox (resolved discrepancy)
+
+The first version of this skill said the system ffmpeg was broken (`liblapack.so.3` missing).
+That was true only for about two minutes: the owner's `apt` install was in progress. `dpkg.log`
+shows `liblapack3` unpacked at 19:55:32 and configured at 19:57:58 on 2026-11-21 (configuring
+creates the `liblapack.so.3` alternatives link), and the failing check ran at about 19:57.
+Re-tested 2026-11-22 with a real encode: `/usr/bin/ffmpeg` 6.1.1 encodes libx264 + AAC, `ffprobe`
+reads it back, and the `blackdetect`, `freezedetect` and `volumedetect` filters the checks use
+all run. The host route now uses the system ffmpeg when it works, keeping the static build in
+`~/.local/share/manim-video/bin` only as a fallback, and `check_env.sh --host` runs that encode
+test. The container route never used the host ffmpeg: the image has its own ffmpeg 6.1.1.
 
 ## Troubleshooting
 

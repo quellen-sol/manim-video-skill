@@ -4,13 +4,17 @@
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SKILL_DIR="$(dirname "$SCRIPTS_DIR")"
 
-# User-space tool home: static ffmpeg/ffprobe live in $MANIM_VIDEO_HOME/bin. It goes first on
-# PATH, because a system ffmpeg can be installed but broken (missing shared libraries).
+# User-space tool home ($MANIM_VIDEO_HOME/bin may hold a static ffmpeg/ffprobe from
+# setup_env.sh --host). The system ffmpeg is used when it runs; the static build is only a
+# fallback for a missing or broken one (for example a missing shared library).
 MANIM_VIDEO_HOME="${MANIM_VIDEO_HOME:-$HOME/.local/share/manim-video}"
-case ":$PATH:" in
-  *":$MANIM_VIDEO_HOME/bin:"*) ;;
-  *) [ -d "$MANIM_VIDEO_HOME/bin" ] && PATH="$MANIM_VIDEO_HOME/bin:$PATH" ;;
-esac
+if ! { command -v ffmpeg >/dev/null 2>&1 && ffmpeg -version >/dev/null 2>&1 \
+       && command -v ffprobe >/dev/null 2>&1 && ffprobe -version >/dev/null 2>&1; }; then
+  case ":$PATH:" in
+    *":$MANIM_VIDEO_HOME/bin:"*) ;;
+    *) [ -d "$MANIM_VIDEO_HOME/bin" ] && PATH="$MANIM_VIDEO_HOME/bin:$PATH" ;;
+  esac
+fi
 export PATH MANIM_VIDEO_HOME
 
 MANIM_VERSION="${MANIM_VERSION:-0.22.1}"

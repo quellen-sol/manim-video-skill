@@ -77,7 +77,7 @@ git clone git@github.com:quellen-sol/manim-video-skill.git ~/dev/manim-video-ski
 cd ~/dev/manim-video-skill
 ./install.sh --dry-run                                     # what it would link
 ./install.sh                                               # link; --uninstall to undo
-skills/manim-video/scripts/render-in-container.sh --check  # Docker, compose, image status
+skills/manim-video/scripts/render-in-container.sh --check  # Docker, compose, image (NOT READY until built)
 skills/manim-video/scripts/setup_env.sh                    # build manim-video:local (~6 min first time)
 skills/manim-video/scripts/check_env.sh --tts              # fuller read-only check (add --gpu, --host)
 skills/manim-video/scripts/render-in-container.sh tests/jobs/smoke   # first smoke render (~15 s)

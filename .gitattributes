@@ -1,0 +1,17 @@
+# Line endings: everything that runs inside the Linux container or under a POSIX shell must keep
+# LF on every checkout, including Windows with core.autocrlf=true (a CRLF shebang or Dockerfile
+# line breaks the image build, the container entrypoint and the shell shims).
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+# Binary files that may appear in examples or assets
+*.png binary
+*.jpg binary
+*.gif binary
+*.mp4 binary
+*.wav binary
+*.mp3 binary
+*.pdf binary
+*.ttf binary
+*.otf binary

@@ -32,7 +32,7 @@ run_job() {
 declare -A RES
 row() {  # NAME JSON LABEL
   local name="$1" json="$2" label="$3" times=() t frames gl
-  for i in $(seq 1 "$REPS"); do
+  for _ in $(seq 1 "$REPS"); do
     run_job "$name" "$json"
     t="$(field "$WORK/$name/out/summary.json" "d['timings']['render']")"
     times+=("$t")
@@ -67,7 +67,7 @@ echo "| Encoder | Settings | Encode s | Size MB | SSIM vs Manim's file |"
 echo "|---|---|---|---|---|"
 enc_row() {  # ENCODER GPU LABEL SETTINGS
   local enc="$1" gpu="$2" times=() t
-  for i in $(seq 1 "$REPS"); do
+  for _ in $(seq 1 "$REPS"); do
     printf '{"scene":"Bench","quality":"final","gpu":%s,"encode":"%s","stills":"none"}\n' "$gpu" "$enc" > "$SRC_DIR/job.json"
     "$RENDER" "$SRC_DIR" --no-build >"$SRC_DIR-$enc.log" 2>&1 || { echo "FAILED: encode $enc" >&2; return 1; }
     times+=("$(field "$SRC_DIR/out/summary.json" "d['timings']['encode']")")

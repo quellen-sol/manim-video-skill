@@ -1,7 +1,9 @@
+# shellcheck shell=bash
 # Shared defaults for the manim-video scripts. Sourced, not executed.
 # Every value can be overridden from the environment.
 
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck disable=SC2034  # used by the scripts that source this file
 SKILL_DIR="$(dirname "$SCRIPTS_DIR")"
 
 # User-space tool home ($MANIM_VIDEO_HOME/bin may hold a static ffmpeg/ffprobe from

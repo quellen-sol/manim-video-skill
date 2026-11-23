@@ -1,0 +1,5 @@
+{
+  "_comment": "Parallel-sections traps; see scene.py. tests/test_container.sh sets scene and workers.",
+  "scene": "Traced",
+  "quality": "preview"
+}

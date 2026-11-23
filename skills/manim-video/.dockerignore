@@ -4,3 +4,5 @@
 !docker/requirements.lock
 !docker/manim_job.py
 !scripts/*.py
+# the host-side wrapper is not part of the image
+scripts/render_in_container.py

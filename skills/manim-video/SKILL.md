@@ -2,7 +2,7 @@
 name: manim-video
 description: Makes explanatory animated videos (math, computer science, ML, engineering) with Manim Community v0.22. Runs a mandatory plan, render, watch-the-frames, judge, fix loop and delivers a reviewed MP4, silent or with Kokoro TTS narration. Use when asked for an animation, animated diagram, explainer video or 3Blue1Brown-style visualisation.
 license: MIT
-compatibility: Needs Docker with the compose plugin; the bundled image (built on first use) holds Manim Community 0.22.1, LaTeX, ffmpeg and the helpers. Fallback without Docker - a host Manim Community 0.22 install with LaTeX, ffmpeg and Python 3.11+. Narration needs an OpenAI-compatible TTS server such as Kokoro.
+compatibility: Needs Docker with the compose plugin (Docker Engine on Linux, Docker Desktop on macOS or Windows) and Python 3.9+ to run the wrapper; the bundled image (built on first use, amd64 or arm64) holds Manim Community 0.22.1, LaTeX, ffmpeg and the helpers. Fallback without Docker - a host Manim Community 0.22 install with LaTeX, ffmpeg and Python 3.11+. Narration needs an OpenAI-compatible TTS server such as Kokoro.
 ---
 
 # Manim video
@@ -42,7 +42,10 @@ Every other path in this file is relative to `SKILL_DIR`.
 1. Run `"$SKILL_DIR/scripts/check_env.sh"`. If it prints `RESULT: NOT READY`, run
    `"$SKILL_DIR/scripts/setup_env.sh"` (builds the render image; about 6 minutes the first
    time, no root), then check again. If Docker itself is unusable, see "Host route" at the end.
-   If it still fails, stop and report the FAIL lines.
+   If it still fails, stop and report the FAIL lines. **Windows without bash (PowerShell):**
+   use `& "$SKILL_DIR\scripts\render-in-container.ps1" --check` and `--build` instead; every
+   `render-in-container.sh` command in this file works the same with `render-in-container.ps1`
+   (both run `scripts/render_in_container.py`, which needs Python 3.9+).
 2. **Ask the user before planning**, in one short message:
    - "Do you want spoken narration (Kokoro text-to-speech), or a silent video?"
    - Only if unclear from the request: audience, depth, target length.
@@ -144,8 +147,8 @@ Start from [templates/scene_silent.py](templates/scene_silent.py) or
 "$SKILL_DIR/scripts/render-in-container.sh" ./manim/<slug>      # job.json "quality": "preview"
 ```
 
-This renders 854x480 at 15 fps (seconds to a few minutes; a 1080p60 final of a 2-minute video
-takes 15 to 25 minutes on 4 cores), runs the automated checks and extracts stills, and prints `VIDEO:`, `SHEET:`, `INDEX:`, `REPORT:` and `LOG:` paths. Exit
+This renders 854x480 at 15 fps (seconds to a few minutes), runs the automated checks and
+extracts stills, and prints `VIDEO:`, `SHEET:`, `INDEX:`, `REPORT:` and `LOG:` paths. Exit
 status 4 means the render failed (the log tail is printed; LaTeX errors are flagged); 1 means a
 check FAILed. `out/report.md` says whether the layout guard ran and lists its `LAYOUT` warnings
 (`CLIPPED`, `UNSAFE`, `OFFSCREEN`, `OVERLAP`, `CROSSED`, `END`). Treat each warning as a bug
@@ -211,6 +214,12 @@ needs a preview.
 "$SKILL_DIR/scripts/render-in-container.sh" ./manim/<slug> --quality final
 ```
 
+On an idle 4-core host a 2-minute final takes about 5 to 8 minutes; renders running at the same
+time slow each other down roughly in proportion. If the user wants it sooner and nothing else is
+rendering, `--workers 2` renders two sections in parallel and joins them (frame-identical; about
+1.2x faster on 4 cores; it renders serially by itself when it cannot be used). Measurements and
+GPU options: [references/gpu-and-speed.md](references/gpu-and-speed.md).
+
 This writes `out/<Scene>-final.mp4` (1920x1080 at 60 fps), checks it (including the resolution
 and, if narrated, the audio) and extracts 8 evenly spaced stills. Look at the final contact sheet once more, and open 2 or 3 of its frames at full size (high
 resolution can reveal thin strokes or tiny text that the preview hid). If the final shows a bug,
@@ -247,8 +256,10 @@ storyboard in one paragraph, iterations used, bugs found and fixed, what was che
 
 | Path | Use |
 |---|---|
-| `scripts/render-in-container.sh` | **the renderer**: job dir in, `out/` with video, report, stills; `--frames`, `--still K`, `--doctor`, `--build` |
-| `docker/` | the image (`Dockerfile`, pinned `requirements.lock`), `compose.yml` and the opt-in `compose.gpu.yml` |
+| `scripts/render-in-container.sh` | **the renderer**: job dir in, `out/` with video, report, stills; `--frames`, `--still K`, `--doctor`, `--build`, `--check` |
+| `scripts/render-in-container.ps1`, `scripts/render_in_container.py` | the same renderer from Windows PowerShell; the cross-platform Python it all runs |
+| `scripts/parallel_render.py` | opt-in parallel sections (`"workers": N`), run for you in the container |
+| `docker/` | the image (`Dockerfile`, amd64 and arm64, pinned `requirements.lock`), `compose.yml`, the opt-in `compose.gpu.yml` (Linux `/dev/dri`) and `compose.nvidia.yml` (untested) |
 | `scripts/check_env.sh` | read-only check of the container route (`--host`: host route; `--gpu`; `--tts`; `--fonts`) |
 | `scripts/setup_env.sh` | builds the image (`--host`: the host-route venv) |
 | `scripts/render.sh` | host route only: `preview`, `final` or `still` with a host-native Manim |
@@ -266,6 +277,7 @@ storyboard in one paragraph, iterations used, bugs found and fixed, what was che
 | `references/narration.md` | narration writing, voiceover sync, fallback |
 | `references/troubleshooting.md` | LaTeX, fonts, Cairo/Pango, Docker, audio problems |
 | `references/container.md` | the job contract, job.json keys, narration and GPU in the container, benchmarks |
+| `references/gpu-and-speed.md` | where render time goes, parallel sections, GPU and hardware encoding per platform, measured speedups |
 | `references/environment.md` | the host route (fallback) and environment variables |
 | `templates/` | job.json, storyboard, review log, silent and narrated scene skeletons, narration JSON |
 

@@ -8,8 +8,9 @@ The job directory is mounted at /job (read-only) with /job/out writable:
     /job/out/          everything this command writes
 
 Commands:
-    manim-job render [--quality preview|final] [--animations A,B]
-                                                 render the job into /job/out (the default)
+    manim-job render [--quality preview|final] [--animations A,B] [--workers N]
+                                                 render the job into /job/out (the default);
+                                                 --workers N: N parallel sections (gpu-and-speed.md)
     manim-job inspect                            read job.json on stdin; print the settings the
                                                  wrapper needs (NETWORK, GPU, NARRATION, ...)
     manim-job frames [frames.py options]         more stills from the last render, no re-render
@@ -54,7 +55,8 @@ QUALITY = {  # manim flag, default resolution, default fps
 DEFAULT_KOKORO = {"base_url": "http://host.docker.internal:8880/v1", "model": "kokoro"}
 DEFAULT_VOICE = "af_heart"
 TOP_KEYS = {"scene", "file", "quality", "fps", "resolution", "renderer", "gpu", "encode",
-            "narration", "requirements", "stills", "checks", "timeout", "animations", "cache"}
+            "narration", "requirements", "stills", "checks", "timeout", "animations", "cache",
+            "workers", "encoders"}
 # ManimGL (3b1b/manim) idioms that fail or misbehave under Manim Community.
 MANIMGL = re.compile(r"\b(manimlib|manimgl|ShowCreation|ShowCreationThenDestruction|TexMobject|TextMobject|"
                      r"GraphScene|InteractiveScene|TexText)\b|^\s*CONFIG\s*=|self\.embed\(|\.fix_in_frame\(")
@@ -89,7 +91,8 @@ def _unknown(d: dict, allowed: set[str], where: str) -> None:
                        f"(allowed: {', '.join(sorted(allowed))}; prefix a key with _ for comments)")
 
 
-def load_job(raw: dict, quality_override: str | None = None, animations_override: str | None = None) -> dict:
+def load_job(raw: dict, quality_override: str | None = None, animations_override: str | None = None,
+             workers_override: str | None = None) -> dict:
     if not isinstance(raw, dict):
         raise JobError("job.json must be a JSON object")
     _unknown(raw, TOP_KEYS, "job.json")
@@ -198,6 +201,18 @@ def load_job(raw: dict, quality_override: str | None = None, animations_override
         raise JobError('"cache" must be true or false')
     job["cache"] = cache
 
+    # Speed options (references/gpu-and-speed.md). Defaults keep the serial render unchanged.
+    wk = workers_override if workers_override is not None else raw.get("workers", 1)
+    if isinstance(wk, str) and wk.isdigit():
+        wk = int(wk)
+    if isinstance(wk, bool) or not isinstance(wk, int) or not 1 <= wk <= 16:
+        raise JobError('"workers" must be a whole number from 1 (serial, the default) to 16')
+    job["workers"] = wk
+    enc = raw.get("encoders", 1)
+    if isinstance(enc, bool) or not isinstance(enc, int) or not 1 <= enc <= 8:
+        raise JobError('"encoders" must be a whole number from 1 (the default) to 8')
+    job["encoders"] = enc
+
     t = raw.get("timeout", 7200)
     if not isinstance(t, (int, float)) or t <= 0:
         raise JobError('"timeout" must be a positive number of seconds')
@@ -212,7 +227,7 @@ def loopback_to_host(url: str) -> str:
     return re.sub(r"//(127\.0\.0\.1|localhost|\[::1\])([:/]|$)", r"//host.docker.internal\2", url)
 
 
-def read_job_file(quality: str | None = None, animations: str | None = None) -> dict:
+def read_job_file(quality: str | None = None, animations: str | None = None, workers: str | None = None) -> dict:
     p = JOB / "job.json"
     if not p.is_file():
         raise JobError(f"no job.json in the job directory ({p})")
@@ -220,7 +235,7 @@ def read_job_file(quality: str | None = None, animations: str | None = None) -> 
         raw = json.loads(p.read_text())
     except json.JSONDecodeError as e:
         raise JobError(f"job.json is not valid JSON: {e}") from None
-    return load_job(raw, quality, animations)
+    return load_job(raw, quality, animations, workers)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -296,16 +311,19 @@ def clean_previous_outputs() -> None:
     shutil.rmtree(OUT / "tmp", ignore_errors=True)
 
 
-def write_merged_cfg() -> Path:
+def write_merged_cfg(encoders: int = 1) -> Path:
     """Manim keeps only 100 partial movies by default and deletes older ones, which breaks
     per-animation stills in longer scenes. The limit has no CLI flag and --config_file replaces a
-    project manim.cfg, so write a merged copy with the limit raised."""
+    project manim.cfg, so write a merged copy with the limit raised. job.json "encoders" > 1 sets
+    max_inflight_encoders (encode one animation's partial movie while the next one is drawn)."""
     cfg = configparser.ConfigParser(interpolation=None)
     if (JOB / "manim.cfg").is_file():
         cfg.read(JOB / "manim.cfg")
     if not cfg.has_section("CLI"):
         cfg.add_section("CLI")
     cfg.set("CLI", "max_files_cached", "100000")
+    if encoders > 1:
+        cfg.set("CLI", "max_inflight_encoders", str(encoders))
     path = OUT / "tmp" / "manim-video.cfg"
     with path.open("w") as fh:
         cfg.write(fh)
@@ -545,10 +563,17 @@ def cmd_geometry() -> int:
                     say("render the job once first (mux narration needs out/audio/timeline.json)")
                     return 2
                 env["NARRATION_TIMELINE"] = str(timeline)
-        cmd = ["manim", "render", "--dry_run", "-q", job["quality_flag"], "--config_file", str(write_merged_cfg()),
-               "--media_dir", str(OUT / "media"), "--progress_bar", "none", "--renderer", job["renderer"],
-               str(JOB / job["file"]), job["scene"]]
-        say("measuring geometry (dry run: the scene runs, no frames are rendered)")
+        margs = ["--dry_run", "-q", job["quality_flag"], "--config_file", str(write_merged_cfg()),
+                 "--media_dir", str(OUT / "media"), "--progress_bar", "none", "--renderer", job["renderer"]]
+        if job["renderer"] == "cairo":
+            # Manim's --dry_run alone still steps and draws every frame. Fast-forward instead (as
+            # the parallel workers do): nothing is drawn, and each animation jumps to its end
+            # unless the scene has frame-dependent state (dt updaters, wait_until, ...).
+            cmd = [PY, "-m", "parallel_render", "worker", "1000000000", "--", *margs,
+                   "-n", "1000000000", str(JOB / job["file"]), job["scene"]]
+        else:
+            cmd = ["manim", "render", *margs, str(JOB / job["file"]), job["scene"]]
+        say("measuring geometry (the scene runs, no frames are drawn)")
         rc = run_logged(cmd, log, env=env, cwd=str(JOB), timeout=job["timeout"])
     shutil.rmtree(OUT / "tmp", ignore_errors=True)
     if rc != 0:
@@ -573,6 +598,18 @@ def cmd_geometry() -> int:
         say("GeometryGuard ran but no rules were declared")
         return 1
     return grc
+
+
+def parallel_blocker(job: dict) -> str | None:
+    """Why a job must render serially even though it asks for workers (None = parallel is fine)."""
+    if job["renderer"] != "cairo":
+        return "parallel sections support the Cairo renderer only"
+    if job["animations"]:
+        return "an animation range is set"
+    if job["narration"]["enabled"] and job["narration"]["mode"] == "voiceover":
+        return ("manim-voiceover narration places audio while rendering (use narration mode \"mux\" "
+                "for parallel renders)")
+    return None
 
 
 def cmd_still(k: str) -> int:
@@ -634,10 +671,10 @@ def cmd_still(k: str) -> int:
     return 0
 
 
-def cmd_render(quality: str | None, animations: str | None = None) -> int:
+def cmd_render(quality: str | None, animations: str | None = None, workers: str | None = None) -> int:
     t_start = time.monotonic()
     try:
-        job = read_job_file(quality, animations)
+        job = read_job_file(quality, animations, workers)
     except JobError as e:
         say(f"bad job: {e}")
         return 2
@@ -717,7 +754,8 @@ def cmd_render(quality: str | None, animations: str | None = None) -> int:
 
     # Render. GeometryGuard (scripts/geometry_qa.py) dumps its measurements here.
     env["GEOMETRY_JSON"] = str(OUT / "geometry.json")
-    cmd = ["manim", "render", "-q", job["quality_flag"], "--config_file", str(write_merged_cfg()),
+    cfg_path = write_merged_cfg(job["encoders"])
+    cmd = ["manim", "render", "-q", job["quality_flag"], "--config_file", str(cfg_path),
            "--media_dir", str(OUT / "media"), "--progress_bar", "none", "--renderer", job["renderer"],
            "--fps", f"{job['fps']:g}", "-r", f"{job['width']},{job['height']}", "--format", "mp4"]
     if job["animations"]:
@@ -729,12 +767,48 @@ def cmd_render(quality: str | None, animations: str | None = None) -> int:
         # some changes (for example swapping one rate function for another), so a fix may not show.
         cmd.append("--disable_caching")
     cmd += [str(JOB / job["file"]), job["scene"]]
+    if job["encoders"] > 1:
+        summary["encoders"] = job["encoders"]
     say(f"rendering {job['file']} {job['scene']}: {job['quality']} {job['width']}x{job['height']} @ "
         f"{job['fps']:g} fps, {job['renderer']} renderer, GPU {'on' if gpu['usable'] else 'off'}, "
-        f"network {'on' if job['network'] == 'bridge' else 'off'}")
+        f"network {'on' if job['network'] == 'bridge' else 'off'}"
+        + (f", {job['workers']} workers" if job["workers"] > 1 else ""))
     t0 = time.time()
     tm = time.monotonic()
-    rc = run_logged(cmd, log, env=env, cwd=str(JOB), timeout=job["timeout"])
+    parallel_video = None
+    why_serial = parallel_blocker(job) if job["workers"] > 1 else None
+    if why_serial:
+        warnings.append(f"workers {job['workers']} ignored: {why_serial}; rendered serially")
+    elif job["workers"] > 1:
+        import parallel_render   # on PYTHONPATH in the image
+        margs = ["-q", job["quality_flag"], "--config_file", str(cfg_path), "--progress_bar", "none",
+                 "--renderer", job["renderer"], "--fps", f"{job['fps']:g}", "-r", f"{job['width']},{job['height']}",
+                 "--format", "mp4"]
+        try:
+            pres = parallel_render.run(python=PY, manim_args=margs, scene_file=str(JOB / job["file"]),
+                                       scene=job["scene"], cwd=str(JOB), out=OUT, media=OUT / "media",
+                                       workers=job["workers"], env=env, log=log, timeout=job["timeout"])
+        except subprocess.TimeoutExpired:
+            pres = {"status": "failed", "reason": f"timed out after {job['timeout']}s"}
+        except Exception as exc:  # a bug in the parallel path must not cost the render
+            import traceback
+            log.write("\nparallel: internal error\n" + traceback.format_exc())
+            pres = {"status": "fallback", "reason": f"internal error in the parallel path ({type(exc).__name__}: {exc})"}
+        summary["parallel"] = {k: v for k, v in pres.items() if k not in ("video", "partial_list")}
+        if pres["status"] == "ok":
+            parallel_video = Path(pres["video"])
+            say(f"parallel: {pres['workers']} workers over {pres['animations']} animations, ranges "
+                f"{pres['ranges']}, seams verified; timings {pres['timings']}")
+        elif pres["status"] == "fallback":
+            warnings.append(f"parallel render not used ({pres['reason']}); rendered serially")
+            say(f"parallel: {pres['reason']}; rendering serially instead")
+        else:
+            summary["timings"]["render"] = round(time.monotonic() - tm, 2)
+            say(f"parallel render FAILED: {pres.get('reason')}. Last lines of out/render.log:")
+            log.flush()
+            print(tail(log_path), flush=True)
+            return finish("failed", 4)
+    rc = 0 if parallel_video else run_logged(cmd, log, env=env, cwd=str(JOB), timeout=job["timeout"])
     summary["timings"]["render"] = round(time.monotonic() - tm, 2)
     log.flush()
 
@@ -761,7 +835,7 @@ def cmd_render(quality: str | None, animations: str | None = None) -> int:
             say("this is a LaTeX error: check the MathTex/Tex strings (references/troubleshooting.md)")
         return finish("failed", 4)
 
-    media_video = find_video(t0)
+    media_video = parallel_video or find_video(t0)
     if media_video is None:
         say("render finished but no video was written (did the scene play any animation?)")
         return finish("failed", 4)
@@ -892,13 +966,13 @@ def main(argv: list[str]) -> int:
     if cmd == "render":
         opts, rest = {}, argv[1:]
         while rest:
-            if len(rest) >= 2 and rest[0] in ("--quality", "--animations"):
+            if len(rest) >= 2 and rest[0] in ("--quality", "--animations", "--workers"):
                 opts[rest[0][2:]] = rest[1]
                 rest = rest[2:]
             else:
-                say("usage: manim-job render [--quality preview|final] [--animations A,B]")
+                say("usage: manim-job render [--quality preview|final] [--animations A,B] [--workers N]")
                 return 2
-        return cmd_render(opts.get("quality"), opts.get("animations"))
+        return cmd_render(opts.get("quality"), opts.get("animations"), opts.get("workers"))
     if cmd == "inspect":
         return cmd_inspect()
     if cmd == "frames":

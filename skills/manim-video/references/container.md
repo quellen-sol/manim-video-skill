@@ -26,7 +26,7 @@ jobs/<slug>/                 any path you like; one directory per video
     │                            plus LayoutGuard and Timeline warnings
     ├── geometry.json            GeometryGuard's measurements: every tracked object's box and
     │                            centre after every animation, and every rule result
-    ├── geometry-check.txt/.json from --geometry (a dry run of the scene: no frames)
+    ├── geometry-check.txt/.json from --geometry (the scene runs, no frames are drawn)
     ├── stills/sheet_NN.png      contact sheets to look at; stills/frame_*.png full size;
     │                            stills/index.txt maps tiles to times and beats
     ├── frames/                  extra stills from `--frames` (below)
@@ -73,7 +73,9 @@ work. It runs as your uid and gid, so everything in `out/` belongs to you.
 | `stills` | `"auto"` | `auto` (one still per animation plus midpoints for preview, 8 even stills for final), `anims` (alias `beats`), `count:N`, `none` |
 | `checks` | `{}` | `light_bg` (true for light themes), `min_duration`, `max_duration` (seconds) |
 | `cache` | `true` | `false` re-renders every animation (`--disable_caching`): use it when a fix does not show up, because Manim's cache key misses some changes (e.g. swapping one rate function for another). Narrated jobs never use the cache |
-| `timeout` | `7200` | render time limit in seconds (a 1080p60 final of a 2 to 3 minute video takes 15 to 30 minutes on 4 cores) |
+| `workers` | `1` | opt-in: render the scene as N contiguous sections in N processes and join them (`--workers N` on the command line). Output is frame-identical to a serial render: each worker replays earlier animations exactly without drawing them, and every seam is checked; it falls back to serial by itself when it cannot be used (manim-voiceover narration, `animations` set, OpenGL renderer, a failed seam check). Measurements and traps: [gpu-and-speed.md](gpu-and-speed.md) |
+| `encoders` | `1` | opt-in: Manim's `max_inflight_encoders`, i.e. keep encoding the last animations' partial movies while the next ones are drawn, instead of waiting at the end of each animation. Same frames; see [gpu-and-speed.md](gpu-and-speed.md) |
+| `timeout` | `7200` | render time limit in seconds (whole job; parallel workers each get it too) |
 
 Unknown keys are an error (typos fail fast). Keys that start with `_` are comments.
 
@@ -84,10 +86,15 @@ R="$SKILL_DIR/scripts/render-in-container.sh"
 "$R" jobs/unit-circle                       # render as job.json says (preview by default)
 "$R" jobs/unit-circle --quality final       # the deliverable, without editing job.json
 "$R" jobs/unit-circle --frames --at 12.5,31 # extra full-size stills from the last render
-"$R" jobs/unit-circle --geometry            # re-measure GeometryGuard rules in seconds (dry run)
+"$R" jobs/unit-circle --geometry            # re-measure GeometryGuard rules in seconds (no frames)
 "$R" --doctor [--gpu]                       # versions, fonts, LaTeX, EGL and VA-API in the image
 "$R" --build                                # build or rebuild the image (about 6 min the first time)
 ```
+
+On Windows (PowerShell) run `scripts\render-in-container.ps1` with the same arguments; on any OS
+`python3 scripts/render_in_container.py` is the same program (the `.sh` and `.ps1` files are thin
+shims; Python 3.9+, standard library only). `--check [--tts]` is a quick read-only readiness check
+on any OS.
 
 It prints `VIDEO:`, `SHEET:`, `INDEX:`, `REPORT:` and `LOG:` lines with host paths. Exit status:
 0 rendered and checks passed (WARNs allowed), 1 rendered but a check FAILed, 2 bad job or usage,
@@ -156,6 +163,10 @@ What the GPU can and cannot do here (measured on the nucbox; full numbers below)
   h264_vaapi` fails with "Unknown video encoder"). Manim always encodes once itself, so a
   re-encode is extra time, and at equal quality (SSIM 0.9996) the VA-API file is 4 to 5 times
   larger. So `"encode": "manim"` (no re-encode) stays the default.
+- Other GPUs: AMD on Linux uses the same `--gpu` (Mesa radeonsi through `/dev/dri`); NVIDIA on
+  Linux uses `--nvidia` (`docker/compose.nvidia.yml`, NVIDIA Container Toolkit). Both UNTESTED;
+  Docker Desktop on macOS and Windows gives Linux containers no GPU for this use. Recipes, the
+  OpenGL renderer's limits and hardware encoders per platform: [gpu-and-speed.md](gpu-and-speed.md).
 - Defaults chosen from these numbers: `renderer: cairo`, `gpu: false`, `encode: manim`. The GPU
   stays opt-in for experiments and for heavier OpenGL/3D work on other hardware, where it might
   pay off; it was not measured to help here.
@@ -189,7 +200,8 @@ Re-run on another machine with `tests/bench_gpu.sh` (needs a quiet host; about 6
 
 ## Compose files and the security settings
 
-`docker/compose.yml` defines the `manim` service; `docker/compose.gpu.yml` is the GPU override.
+`docker/compose.yml` defines the `manim` service; `docker/compose.gpu.yml` is the GPU override
+(`/dev/dri`), `docker/compose.nvidia.yml` the untested NVIDIA one.
 The style follows the host's media-stack compose file (TZ/UMASK environment, bind mounts, GPU via
 `devices` + `group_add`), but this is a run-to-completion job rather than a daemon:
 

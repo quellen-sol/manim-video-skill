@@ -8,8 +8,10 @@
 # renders (CPU default, network none) with video, report and stills owned by the caller; --frames
 # and --still work; a narrated job reaches Kokoro from inside the container (voiceover and mux
 # modes) without the key appearing in any output; the image refuses root; bad job.json and
-# ManimGL code are rejected; a GPU-override run sees the render node (if the host has one);
-# no containers or networks are left behind.
+# ManimGL code are rejected; parallel sections ("workers": 2) and "encoders": 4 give exactly the
+# serial render's frames; a GPU-override run sees the render node (if the host has one); SIGTERM
+# to the wrapper mid-render exits 130 and removes the container; no containers or networks are
+# left behind.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 R="$ROOT/skills/manim-video/scripts/render-in-container.sh"
@@ -23,13 +25,17 @@ pass() { printf 'PASS  %s\n' "$*"; PASS=$((PASS+1)); }
 fail() { printf 'FAIL  %s\n' "$*"; FAIL=$((FAIL+1)); }
 skip() { printf 'SKIP  %s\n' "$*"; }
 field() { python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2], ''))" "$@"; }
+frames_md5() {  # md5 of every decoded frame, in order
+  docker run --rm --network none --user "$(id -u):$(id -g)" -v "$(dirname "$1"):/v:ro" "$IMAGE" exec \
+    ffmpeg -v error -i "/v/$(basename "$1")" -map 0:v:0 -f framemd5 - | grep -v '^#' | awk -F, '{print $6}' | md5sum
+}
 
 rm -rf "$WORK"; mkdir -p "$WORK"
 cp -r "$ROOT/tests/jobs/smoke" "$ROOT/tests/jobs/narrated" "$ROOT/tests/jobs/mux" "$WORK/"
 # Containers of THIS test's jobs (other renders may run concurrently and are not counted).
 own_containers() {
   docker ps -a --filter label=com.docker.compose.service=manim --format '{{.Label "com.docker.compose.project"}}' \
-    | grep -cE '^manim-(smoke|smoke-gpu|narrated|mux|gl|doctor)-[0-9]+-[0-9]+$' || true
+    | grep -cE '^manim-(smoke|smoke-gpu|smoke-par|smoke-enc|smoke-int|trap-[a-z]+-[12]|narrated|mux|gl|doctor)-[0-9]+-[0-9]+$' || true
 }
 networks_before="$(docker network ls -q | sort | tr '\n' ' ')"
 
@@ -48,6 +54,36 @@ grep -q "MathTex\|Tex(" "$WORK/smoke/scene.py" && ! grep -qi "latex error" "$WOR
 owner="$(stat -c %u:%g "$WORK/smoke/out/Smoke-preview.mp4")"
 [ "$owner" = "$(id -u):$(id -g)" ] && pass "output owned by the caller ($owner)" || fail "output owner $owner"
 [ "$(stat -c %a "$WORK/smoke/scene.py")" = "$(stat -c %a "$ROOT/tests/jobs/smoke/scene.py")" ] && pass "job sources untouched" || fail "job sources changed"
+
+# 2b. speed options: same frames as the serial render
+for v in par enc; do
+  cp -r "$ROOT/tests/jobs/smoke" "$WORK/smoke-$v"
+  python3 - "$WORK/smoke-$v/job.json" "$v" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d.update({"workers": 2} if sys.argv[2] == "par" else {"encoders": 4})
+json.dump(d, open(sys.argv[1], "w"))
+PY
+  "$R" "$WORK/smoke-$v" >/dev/null 2>&1; rc=$?
+  if [ $rc -eq 0 ] && [ "$(frames_md5 "$WORK/smoke-$v/out/Smoke-preview.mp4")" = "$(frames_md5 "$WORK/smoke/out/Smoke-preview.mp4")" ]; then
+    pass "$([ $v = par ] && echo '"workers": 2 (parallel sections, seams checked)' || echo '"encoders": 4') renders exactly the serial frames"
+  else fail "speed option $v (exit $rc) differs from the serial render"; fi
+done
+python3 -c "import json,sys; p=json.load(open(sys.argv[1])).get('parallel',{}); sys.exit(0 if p.get('status')=='ok' and p.get('seams') else 1)" \
+  "$WORK/smoke-par/out/summary.json" && pass "parallel summary: status ok, seams recorded" || fail "parallel summary"
+# traps: a TracedPath/dt updater must be stepped (same frames); a frame-rate-dependent updater must
+# be caught by the seam or geometry check and rendered serially (same frames)
+for cls in Traced Stateful; do
+  for w in 1 2; do
+    d="$WORK/trap-$cls-$w"; mkdir -p "$d"; cp "$ROOT/tests/jobs/parallel-traps/scene.py" "$d/"
+    printf '{"scene": "%s", "quality": "preview", "workers": %s}\n' "$cls" "$w" > "$d/job.json"
+    "$R" "$d" >/dev/null 2>&1 || fail "trap $cls workers=$w render failed"
+  done
+  st="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('parallel',{}).get('status'))" "$WORK/trap-$cls-2/out/summary.json")"
+  want=ok; [ "$cls" = Stateful ] && want=fallback
+  if [ "$st" = "$want" ] && [ "$(frames_md5 "$WORK/trap-$cls-2/out/$cls-preview.mp4")" = "$(frames_md5 "$WORK/trap-$cls-1/out/$cls-preview.mp4")" ]; then
+    pass "parallel trap $cls: $st, same frames as serial"
+  else fail "parallel trap $cls: status $st (want $want) or frames differ"; fi
+done
 
 # 3. --frames and --still
 "$R" "$WORK/smoke" --frames --at 3,9 >/dev/null 2>&1 && [ "$(ls "$WORK"/smoke/out/frames/frame_*.png 2>/dev/null | wc -l)" -eq 2 ] \
@@ -99,7 +135,18 @@ else
   skip "no /dev/dri render node (or --no-gpu); GPU override not tested"
 fi
 
-# 7. nothing left behind
+# 7. interrupt: SIGTERM to the wrapper mid-render
+cp -r "$ROOT/tests/jobs/smoke" "$WORK/smoke-int"
+printf '{"scene": "Smoke", "quality": "final", "cache": false}\n' > "$WORK/smoke-int/job.json"
+"$R" "$WORK/smoke-int" >/dev/null 2>&1 &
+pid=$!
+for _ in $(seq 1 60); do grep -q "^\$ manim" "$WORK/smoke-int/out/render.log" 2>/dev/null && break; sleep 1; done
+sleep 3; kill -TERM "$pid"; wait "$pid"; rc=$?
+sleep 2
+[ $rc -eq 130 ] && [ "$(docker ps -a --format '{{.Names}}' | grep -c 'manim-smoke-int-')" -eq 0 ] \
+  && pass "SIGTERM mid-render: exit 130, container removed" || fail "interrupt: exit $rc, $(docker ps -a --format '{{.Names}}' | grep -c 'manim-smoke-int-') container(s) left"
+
+# 8. nothing left behind
 left="$(own_containers)"
 [ "$left" -eq 0 ] && pass "no stray containers from this test's jobs (docker ps -a)" || fail "stray containers from this test: $left"
 [ "$(docker network ls -q | sort | tr '\n' ' ')" = "$networks_before" ] && pass "no new networks" || fail "network list changed"

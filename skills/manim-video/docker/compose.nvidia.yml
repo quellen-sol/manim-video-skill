@@ -1,0 +1,24 @@
+# Opt-in NVIDIA GPU for the manim service: UNTESTED (the maintainers' host has no NVIDIA GPU).
+#
+# Add it with the wrapper's --nvidia flag, or by hand: docker compose -f docker/compose.yml
+# -f docker/compose.nvidia.yml run --rm -T manim. Needs a Linux host with the NVIDIA driver and
+# the NVIDIA Container Toolkit configured for Docker (nvidia-ctk runtime configure --runtime=docker,
+# then restart Docker). Docker Desktop on Windows passes NVIDIA GPUs to Linux containers for CUDA
+# compute only (WSL2 backend), not the OpenGL/EGL or NVENC this skill would use; macOS has none.
+#
+# What it could help (references/gpu-and-speed.md): job.json "renderer": "opengl" (EGL on the
+# NVIDIA driver instead of Mesa llvmpipe) and a manual h264_nvenc re-encode. The default Cairo
+# renderer is CPU-only and does not use it.
+services:
+  manim:
+    environment:
+      # glvnd: prefer the NVIDIA EGL vendor library that the toolkit mounts with "graphics".
+      - __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              # graphics = EGL/OpenGL libraries, video = NVENC/NVDEC, utility = nvidia-smi
+              capabilities: [gpu, graphics, video, utility]

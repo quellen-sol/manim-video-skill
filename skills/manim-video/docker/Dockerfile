@@ -9,6 +9,13 @@
 # latex-extra, fonts-recommended, science, tipa) with dvisvgm, Cairo/Pango with Noto fonts, Mesa
 # EGL/GL (llvmpipe on CPU, iris on an Intel iGPU) and Intel VA-API (iHD driver, vainfo).
 #
+# Platforms: linux/amd64 and linux/arm64 (Apple Silicon under Docker Desktop, arm64 Linux). The
+# same digest, snapshot and lock serve both: the base digest is a multi-arch index, the snapshot
+# service carries the arm64 (ports) archive under the same URL, and docker/requirements.lock holds
+# hashes for every wheel and sdist (on arm64, glcontext and moderngl build from their sdists with
+# g++ only). amd64-only: the Intel VA-API driver (intel-media-va-driver). Docker builds for the
+# host's own platform by default; cross-build with `docker buildx build --platform linux/arm64`.
+#
 # Reproducible inputs:
 #   - the base image is pinned by digest (UBUNTU_DIGEST);
 #   - every apt install resolves against one dated snapshot of the Ubuntu archive
@@ -24,11 +31,17 @@ ARG APT_SNAPSHOT=20261120T000000Z
 
 FROM ubuntu:24.04@${UBUNTU_DIGEST} AS base
 ARG APT_SNAPSHOT
+ARG TARGETARCH
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 LC_ALL=C.UTF-8
 # The snapshot service is HTTPS-only and the base image has no CA bundle, so bootstrap
-# ca-certificates from the frozen noble release pocket (it never changes), then point apt at the
-# dated snapshot only. Package integrity comes from the archive's GPG signatures either way.
-RUN echo "deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] http://archive.ubuntu.com/ubuntu noble main" > /tmp/boot.list \
+# ca-certificates from the frozen noble release pocket (it never changes; amd64 lives on
+# archive.ubuntu.com, arm64 on ports.ubuntu.com), then point apt at the dated snapshot only.
+# Package integrity comes from the archive's GPG signatures either way.
+RUN case "${TARGETARCH:-amd64}" in \
+      amd64|i386) BOOT=http://archive.ubuntu.com/ubuntu ;; \
+      *) BOOT=http://ports.ubuntu.com/ubuntu-ports ;; \
+    esac \
+ && echo "deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] $BOOT noble main" > /tmp/boot.list \
  && apt-get -o Dir::Etc::SourceList=/tmp/boot.list -o Dir::Etc::SourceParts=/nonexistent update \
  && apt-get -o Dir::Etc::SourceList=/tmp/boot.list -o Dir::Etc::SourceParts=/nonexistent \
       install -y --no-install-recommends ca-certificates \
@@ -51,7 +64,11 @@ RUN python3.12 -m venv /opt/venv \
 
 # ---- runtime stage ---------------------------------------------------------------------------
 FROM base AS runtime
-RUN apt-get update \
+ARG TARGETARCH
+# amd64-only packages: the Intel VA-API driver (h264_vaapi on Intel iGPUs).
+RUN ARCH_PKGS="" \
+ && case "${TARGETARCH:-amd64}" in amd64) ARCH_PKGS="intel-media-va-driver" ;; esac \
+ && apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates python3.12 \
       libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 fontconfig \
@@ -60,7 +77,7 @@ RUN apt-get update \
       texlive-latex-base texlive-latex-extra texlive-fonts-recommended texlive-science \
       dvisvgm tipa \
       libegl1 libgl1 libegl-mesa0 libgl1-mesa-dri libgbm1 \
-      intel-media-va-driver vainfo \
+      vainfo $ARCH_PKGS \
  && rm -rf /var/lib/apt/lists/* \
  && fc-cache -f \
  && { userdel --remove ubuntu 2>/dev/null || true; } \
@@ -96,6 +113,7 @@ LABEL org.opencontainers.image.title="manim-video" \
       org.manim-video.manim="0.22.1" \
       org.manim-video.manim-voiceover="0.4.0" \
       org.manim-video.apt-snapshot="${APT_SNAPSHOT}" \
+      org.manim-video.arch="${TARGETARCH}" \
       org.manim-video.source-sha="${SOURCE_SHA}"
 
 USER 1000:1000

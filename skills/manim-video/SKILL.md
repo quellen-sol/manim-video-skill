@@ -214,7 +214,7 @@ needs a preview.
 "$SKILL_DIR/scripts/render-in-container.sh" ./manim/<slug> --quality final
 ```
 
-On an idle 4-core host a 2-minute final takes about 5 to 8 minutes; renders running at the same
+On an idle 4-core host a 2 to 3 minute final takes about 5 to 9 minutes; renders running at the same
 time slow each other down roughly in proportion. If the user wants it sooner and nothing else is
 rendering, `--workers 2` renders two sections in parallel and joins them (frame-identical; about
 1.2x faster on 4 cores; it renders serially by itself when it cannot be used). Measurements and

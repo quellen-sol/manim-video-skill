@@ -27,7 +27,7 @@ video decodes to exactly the serial render's frames.
 | Manim's partial-movie cache | unit-circle preview re-render 85 s to 60 s (21 of 138 animations reused) | a stale picture when the key misses a change (`"cache": false`) | on by default (silent jobs) | unchanged |
 | Running the QA passes concurrently | 0.9x (slower) | none | - | tried, not kept |
 | Skipping the automated checks | would save about 16% of a final job | loses the safety net | not offered | no |
-| Several videos at once | not faster per video: four finals at once took 16 to 27 minutes each (@@SERIAL_TOTALS@@ alone) | none | - | render one at a time |
+| Several videos at once | slower: three finals at once needed 27 minutes of wall time, one after another 19 minutes | none | - | render one at a time |
 | Cairo with the iGPU passed in | 1.00x | none | `--gpu` | no (Cairo is CPU-only) |
 | OpenGL renderer on the Intel iGPU | 0.69x (slower than Cairo; llvmpipe on the CPU 0.71x) | renderer gaps, slightly different strokes | `"renderer": "opengl"` + `--gpu` | no |
 | OpenGL renderer on an NVIDIA or AMD GPU | **UNTESTED** (no such GPU here) | renderer gaps; toolkit setup | `--nvidia` (NVIDIA), `--gpu` (AMD) | only for heavy 3D or fill-bound scenes, after a Cairo comparison |
@@ -91,8 +91,11 @@ What this means:
 
 The earlier figure of "16 to 27 minutes for a 2 to 3 minute final" came from rendering four
 finals **at the same time** on this 4-core host (2026-11-21: 02, 03, 04 and a re-run of 01
-overlapped; each took 16 to 27 minutes). One final alone takes about 6 minutes here
-(@@SERIAL_TOTALS@@).
+overlapped; each took 16 to 27 minutes). One final alone takes 4.7 to 8.9 minutes here (the
+five examples, rendered one at a time on 2026-11-22: 374, 341, 282, 506 and 533 s per job,
+checks included). Rendering several at once did not even help total throughput: 02, 03 and 04,
+started within 90 s of each other on 2026-11-21, needed 27 minutes of wall time; one after
+another they need 19 minutes (341 + 282 + 506 s).
 
 ## Parallel sections (`"workers": N`, measured)
 
@@ -100,10 +103,12 @@ Manim writes every `play()`/`wait()` as its own partial movie file and joins the
 a video can be cut between any two animations. With `"workers": N` (or `--workers N`), the job
 runner inside the container (`scripts/parallel_render.py`):
 
-1. **plans** with one quick pass over the scene (every animation jumps to its end, nothing is
-   drawn): the duration of every animation; it also fills the LaTeX and text caches;
-2. **splits** the animations into N contiguous ranges of about equal frame count, putting each
-   boundary just after a short animation;
+1. **plans** with one quick pass over the scene (every animation jumps to its end): the duration
+   of every animation and an estimated cost (its frame count times the timed cost of one update
+   step and one drawn frame of its end state; about 23 s for the unit circle); it also fills the
+   LaTeX and text caches;
+2. **splits** the animations into N contiguous ranges of about equal estimated cost, putting each
+   boundary just after a cheap animation;
 3. **renders** the ranges in N processes (`manim render -n A,B`), each with its own media
    directory (the LaTeX/text caches hard-linked in, so no two processes ever write the same file).
    Each worker runs the whole `construct()` and **fast-forwards** the animations before its range
@@ -208,10 +213,17 @@ dominate; lowering the resolution saves much less, for the same reason. Offer 10
 wants a final sooner (motion is slightly less smooth); keep 1080p60 as the default.
 
 - **Preview quality** (854x480 at 15 fps, the default `quality` while iterating) is the fast
-  path: the unit-circle preview renders in 85 s against 305 s for its final (plus 31 s for its per-animation stills). Iterate on previews, `--still K` and `--geometry`; render the final once.
+  path: the unit-circle preview renders in 85 s against 305 s for its final (plus 31 s for its
+  per-animation stills). Iterate on previews, `--still K` and `--geometry`; render the final once.
+- **`--geometry`** re-measures the GeometryGuard rules without drawing any frame: 23.7 s for the
+  unit circle (it used Manim's `--dry_run`, which turned out to step and draw every frame: about
+  220 s). Same result (9 rules, 0 violations); `tests/test_geometry.py` still sees the old layout's
+  4 violations through it.
 - **Render a range** with `--animations A,B` to iterate on one section.
 - **Manim's partial-movie cache** (`out/media/`, on by default for silent jobs): a re-render
-  redoes only the animations whose hash changed. Measured on the unit-circle preview: an unchanged second render reused 21 of 138 animations and took 60 s instead of 85 s (Manim's cache key changes for most animations with updaters). Narrated jobs never use it.
+  redoes only the animations whose hash changed. Measured on the unit-circle preview: an unchanged
+  second render reused only 21 of 138 animations and took 60 s instead of 85 s (why the other keys
+  changed was not investigated). Narrated jobs never use it.
 - **Skipping the checks** is not offered (see above): about 16% of a final job here.
 
 ## GPU
@@ -279,8 +291,8 @@ saving it; it is worth it only for a separate delivery encode (for example a sma
 |---|---|---|---|
 | VA-API (`h264_vaapi`, `hevc_vaapi`) | Intel and AMD on Linux | yes, with `--gpu` (Intel driver in the amd64 image; AMD needs `mesa-va-drivers`) | measured on Intel (below) |
 | NVENC (`h264_nvenc`, `hevc_nvenc`, `av1_nvenc`) | NVIDIA on Linux and Windows | yes on Linux with `--nvidia` (the image's ffmpeg has NVENC; the toolkit's `video` capability supplies the driver library) | UNTESTED |
-| Quick Sync (`h264_qsv`) | Intel on Linux and Windows | the image's ffmpeg has `h264_qsv`, but it fails without the oneVPL GPU runtime (not installed) | measured: fails in the container; on Windows with Intel drivers UNTESTED |
-| AMF (`h264_amf`) | AMD on Windows | no (Windows-only ffmpeg builds) | UNTESTED |
+| Quick Sync (`h264_qsv`) | Intel on Linux and Windows | the image's ffmpeg has `h264_qsv` and the oneVPL dispatcher (`libvpl2`), but not Intel's GPU runtime (`libmfx-gen1.2`), so it fails | measured: fails in the container; natively on Windows with Intel drivers UNTESTED |
+| AMF (`h264_amf`) | AMD, normally on Windows | no (the image's ffmpeg is built without AMF) | UNTESTED |
 | VideoToolbox (`h264_videotoolbox`, `hevc_videotoolbox`) | macOS | no (native macOS ffmpeg only, e.g. Homebrew) | UNTESTED |
 
 Measured on this host, re-encoding the unit-circle final (138.9 s, 8334 frames, 1080p60):
@@ -293,7 +305,7 @@ Measured on this host, re-encoding the unit-circle final (138.9 s, 8334 frames, 
 | h264_vaapi, iGPU | QP 26 | 38.2 | 7.0 | 0.9993 |
 | h264_vaapi, iGPU | QP 30 | 38.3 | 5.3 | 0.9986 |
 | hevc_vaapi, iGPU | QP 26 | 39.8 | 5.3 | 0.9995 |
-| h264_qsv, iGPU | global_quality 23 | failed: "Error creating a MFX session" (the image has no oneVPL GPU runtime) | - | - |
+| h264_qsv, iGPU | global_quality 23 | failed: "Error creating a MFX session" (no Intel oneVPL GPU runtime in the image) | - | - |
 
 (`tests/bench_encode.sh`.) VA-API encodes 2.6 times faster than x264 here, but at similar SSIM its
 files are 1.5 to 4 times larger. A one-pass x264 re-encode of the whole file is 41% smaller than

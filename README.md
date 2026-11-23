@@ -297,17 +297,21 @@ had only the skill: prompt, storyboard, final scene code, review log, inspection
 notes on the bugs found and fixed. Videos are not committed (on the nucbox they are in `out/`).
 Each example folder is also a job directory: `render-in-container.sh examples/<name> --quality final`.
 
-| Prompt | Narration | Final (1080p60) | Rubric | Geometry |
-|---|---|---|---|---|
-| unit circle and the six trig functions | silent | 138.9 s | 20/20 | PASS (9 rules) |
-| modern LLM weights and neurons | silent | 150.0 s | 19/20 | PASS (23 rules) |
-| git: commit, branch, merge, rebase, conflicts, teams | silent | 138.5 s | 19/20 | PASS (25 rules) |
-| Fourier series as epicycles | silent | 129.5 s | 20/20 | PASS (13 rules) |
-| gradient descent and backprop | Kokoro via manim-voiceover | 161.2 s | 20/20 | PASS (18 rules) |
+| Prompt | Narration | Final (1080p60) | Rubric | Geometry | Final job, idle nucbox |
+|---|---|---|---|---|---|
+| unit circle and the six trig functions | silent | 138.9 s | 20/20 | PASS (9 rules) | 6 min 14 s |
+| modern LLM weights and neurons | silent | 150.0 s | 19/20 | PASS (23 rules) | 5 min 41 s |
+| git: commit, branch, merge, rebase, conflicts, teams | silent | 138.5 s | 19/20 | PASS (25 rules; 1 unchecked, a WARN) | 4 min 42 s |
+| Fourier series as epicycles | silent | 129.5 s | 20/20 | PASS (13 rules) | 8 min 26 s |
+| gradient descent and backprop | Kokoro via manim-voiceover | 161.2 s | 20/20 | PASS (18 rules) | 8 min 53 s |
 
 These are the container re-run (2026-11-22): every final rendered inside the container and
-passes the automated checks, including the measured geometry check. Iterations, bugs fixed and
-the first run's numbers are in `examples/README.md`.
+passes the automated checks, including the measured geometry check. Re-rendered later that day
+after the cross-platform and speed changes, one at a time on the default route: the four silent
+finals decode to exactly the same frames as before; the narrated one is identical for its first
+109 s and then one frame longer, because one Kokoro clip came back 24 ms longer. The job times
+in the last column include the checks (about one minute). Iterations, bugs fixed and the first
+run's numbers are in `examples/README.md`.
 
 ## Development
 

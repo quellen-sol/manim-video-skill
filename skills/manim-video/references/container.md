@@ -104,8 +104,11 @@ The loop: edit `scene.py` (or `job.json`) on the host, run the wrapper again, op
 and the contact sheets, fix, repeat. For a layout fix, `--geometry` checks the rules in seconds
 before you spend minutes on a preview.
 
-Long renders: a 1080p60 final of a 2 to 3 minute video takes 15 to 25 minutes on 4 cores (plus a
-few minutes of checks). If your tool calls time out sooner, run the wrapper in the background
+Long renders: a 1080p60 final of a 2 to 3 minute video takes 4 to 8 minutes of rendering plus
+about a minute of checks on an idle 4-core host (the five examples: 4.7 to 8.9 minutes per job);
+renders running at the same time slow each other down, so render one at a time. Speed options
+(`"workers"`, `"encoders"`, lower frame rates) and their measurements: [gpu-and-speed.md](gpu-and-speed.md).
+If your tool calls time out sooner, run the wrapper in the background
 (`"$R" JOB_DIR --quality final > JOB_DIR/out-wrapper.log 2>&1 &`) and poll `out/summary.json`:
 its `status` is `running` until the job ends, then `ok`, `checks_failed` or `failed`. Ctrl-C or
 SIGTERM to the wrapper stops the render and removes its container.

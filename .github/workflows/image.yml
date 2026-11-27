@@ -1,0 +1,181 @@
+# Builds the render image (skills/manim-video/docker/Dockerfile) for linux/amd64 and linux/arm64 on
+# native runners, publishes it to GHCR as ghcr.io/<owner>/manim-video:<source hash>, and renders the
+# smoke job with the published image on both architectures.
+#
+# The tag is the wrapper's source hash (render-in-container --source-sha: Dockerfile, lock,
+# manim_job.py and the image's scripts/*.py), so `render-in-container --pull` on any machine fetches
+# exactly the image its checkout would build. A hash that is already published is not rebuilt
+# (run the workflow by hand with "force" to rebuild it). This workflow is the only thing that
+# pushes the image.
+name: image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - skills/manim-video/docker/**
+      - skills/manim-video/scripts/*.py
+      - skills/manim-video/.dockerignore
+      - .github/workflows/image.yml
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild and re-push even if this source hash is already published
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  meta:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      image: ${{ steps.m.outputs.image }}
+      sha: ${{ steps.m.outputs.sha }}
+      build: ${{ steps.m.outputs.build }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: m
+        env:
+          FORCE: ${{ inputs.force }}
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image="ghcr.io/$owner/manim-video"
+          sha="$(python3 skills/manim-video/scripts/render_in_container.py --source-sha)"
+          build=true
+          if [ "$FORCE" != true ] && docker buildx imagetools inspect "$image:$sha" >/dev/null 2>&1; then
+            build=false
+            echo "::notice::$image:$sha is already published; nothing to build"
+          fi
+          { echo "image=$image"; echo "sha=$sha"; echo "build=$build"; } >> "$GITHUB_OUTPUT"
+          echo "image $image:$sha, build $build" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: meta
+    if: needs.meta.outputs.build == 'true'
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: skills/manim-video
+          file: skills/manim-video/docker/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          build-args: SOURCE_SHA=${{ needs.meta.outputs.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          outputs: type=image,name=${{ needs.meta.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=manim-video-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=manim-video-${{ matrix.arch }}
+      - name: Record the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: [meta, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digest-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag the multi-arch image
+        env:
+          IMAGE: ${{ needs.meta.outputs.image }}
+          SHA: ${{ needs.meta.outputs.sha }}
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          refs=()
+          for d in *; do refs+=("$IMAGE@sha256:$d"); done
+          [ "${#refs[@]}" -eq 2 ] || { echo "expected 2 digests, got ${#refs[@]}" >&2; exit 1; }
+          docker buildx imagetools create -t "$IMAGE:$SHA" -t "$IMAGE:latest" \
+            --annotation "index:org.opencontainers.image.source=$SOURCE" \
+            --annotation "index:org.opencontainers.image.description=Manim Community render image for the manim-video skill" \
+            --annotation "index:org.opencontainers.image.licenses=MIT" \
+            "${refs[@]}"
+          docker buildx imagetools inspect "$IMAGE:$SHA"
+
+  smoke:
+    needs: [meta, publish]
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    env:
+      MANIM_PULL_FROM: ${{ needs.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull the published image through the wrapper
+        run: |
+          R=skills/manim-video/scripts/render-in-container.sh
+          "$R" --pull
+          "$R" --status
+      - name: Render the smoke job with it
+        run: |
+          cp -r tests/jobs/smoke "$RUNNER_TEMP/smoke"
+          skills/manim-video/scripts/render-in-container.sh "$RUNNER_TEMP/smoke" --no-build
+          python3 -c "import json,sys; s=json.load(open(sys.argv[1])); print(s); sys.exit(s.get('checks') != 'PASS')" \
+            "$RUNNER_TEMP/smoke/out/summary.json"

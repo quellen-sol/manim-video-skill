@@ -15,8 +15,11 @@ Usage:
                                              rendering frames -> out/geometry-check.txt/.json
   render-in-container JOB_DIR --still K      PNG at final resolution of the frame after animation K
                                              (0-based, as in stills/index.txt) -> out/stills-full/
-  render-in-container --build                build or rebuild the image (manim-video:local)
+  render-in-container --pull                 fetch the published image built from these exact sources
+                                             (MANIM_PULL_FROM:<source hash>) and tag it manim-video:local
+  render-in-container --build                build or rebuild the image locally (manim-video:local)
   render-in-container --status               is the image present and built from these sources?
+  render-in-container --source-sha           print the source hash (the published image's tag)
   render-in-container --doctor [--gpu]       versions, fonts, LaTeX, EGL and VA-API in the image
   render-in-container --check [--tts]        is Docker usable and the image current? (any OS)
 
@@ -33,11 +36,16 @@ The GPU only helps the OpenGL renderer and hardware encoding; the default Cairo 
 CPU-only. Docker Desktop on macOS and Windows gives Linux containers no GPU for this use.
 --workers N overrides job.json "workers": N parallel sections (references/gpu-and-speed.md).
 
+A render with the image missing or stale first pulls the published image for these sources, then
+builds locally if that fails (--no-build: neither; it renders with what is there, or stops).
+
 Exit status: 0 rendered and checks passed (WARNs allowed), 1 rendered but a check FAILed,
 2 bad job or usage, 3 Docker or image problem, 4 render failed, 130 interrupted.
 
 Environment (all optional):
   MANIM_IMAGE      image tag (default manim-video:local)
+  MANIM_PULL_FROM  where published images live (default ghcr.io/quellen-sol/manim-video, built by
+                   .github/workflows/image.yml); none = never pull, always build locally
   KOKORO_API_KEY   given to narrated jobs only, by name, never printed. If unset, it is read from
                    KOKORO_ENV_FILE (default ~/.config/agent-stack/gateway.env, if readable).
   KOKORO_BASE_URL, KOKORO_MODEL, KOKORO_VOICE   defaults for narrated jobs (job.json wins)
@@ -72,6 +80,7 @@ SELF_NAME = "render_in_container.py"   # host-only: excluded from the image and 
 IS_WINDOWS = os.name == "nt" or sys.platform in ("cygwin", "msys")
 IS_MAC = sys.platform == "darwin"
 IS_LINUX = sys.platform.startswith("linux")
+DEFAULT_PULL_FROM = "ghcr.io/quellen-sol/manim-video"
 
 
 class Exit(Exception):
@@ -168,6 +177,15 @@ def source_sha() -> str:
     return h.hexdigest()[:16]
 
 
+def pull_from() -> str | None:
+    """The registry repository of published images, or None if pulling is off."""
+    v = os.environ.get("MANIM_PULL_FROM")
+    if v is None:
+        return DEFAULT_PULL_FROM
+    v = v.strip()
+    return None if v.lower() in ("", "none", "off", "0") else v
+
+
 def image_label(docker: str, image: str) -> str | None:
     r = run_quiet([docker, "image", "inspect", "-f", '{{index .Config.Labels "org.manim-video.source-sha"}}', image])
     return r.stdout.strip() if r.returncode == 0 else None
@@ -224,34 +242,79 @@ class Runner:
         if rc != 0:
             lines = log.read_text(errors="replace").splitlines()
             print("\n".join(lines[-30:]), file=sys.stderr)
-            fail(3, f"image build failed; full log: {log}")
+            hint = ""
+            if re.search(r"certificate verif|CERTIFICATE_VERIFY_FAILED|x509:|SSLError|unknown authority",
+                         "\n".join(lines[-60:]), re.I):
+                hint = (" (TLS errors inside the build usually mean a proxy that re-signs HTTPS; use the "
+                        "published image instead: render-in-container --pull)")
+            fail(3, f"image build failed{hint}; full log: {log}")
         note(f"built {self.image} ({image_size(self.docker, self.image)})")
+
+    def pull_image(self, required: bool) -> bool:
+        """Fetch the image published for exactly these sources (tag = source hash) and tag it as
+        self.image. required: fail on any problem; otherwise note it and return False."""
+        def give_up(msg: str) -> bool:
+            if required:
+                fail(3, msg)
+            note(f"{msg}; building locally instead")
+            return False
+        repo = pull_from()
+        if not repo:
+            if required:
+                fail(3, "pulling is off (MANIM_PULL_FROM=none); build locally with --build")
+            return False
+        want = source_sha()
+        ref = f"{repo}:{want}"
+        note(f"pulling {ref} (the published image for these sources; a few minutes the first time)")
+        r = run_quiet([self.docker, "pull", "-q", ref])
+        if r.returncode != 0:
+            err = (r.stderr.strip().splitlines() or ["no output"])[-1]
+            if re.search(r"not found|manifest unknown", err, re.I):
+                err += " (not published: local changes, or the image workflow has not finished)"
+            elif re.search(r"denied|unauthorized", err, re.I):
+                err += (f" (GHCR says this for a package that does not exist yet, and for a private one: "
+                        f"docker login {repo.split('/')[0]})")
+            return give_up(f"could not pull {ref}: {err}")
+        have = image_label(self.docker, ref)
+        if have != want:
+            if ref != self.image:
+                run_quiet([self.docker, "image", "rm", ref])
+            return give_up(f"{ref} is labelled with sources {have}, expected {want}")
+        if ref != self.image:
+            t = run_quiet([self.docker, "tag", ref, self.image])
+            if t.returncode != 0:
+                return give_up(f"could not tag {ref} as {self.image}: {t.stderr.strip()}")
+            run_quiet([self.docker, "image", "rm", ref])   # drops only the registry tag
+        note(f"pulled {ref} as {self.image} ({image_size(self.docker, self.image)})")
+        return True
 
     def ensure_image(self) -> None:
         have = image_label(self.docker, self.image)
         want = source_sha()
         if not have:
             if self.no_build:
-                fail(3, f"image {self.image} not found; run: render-in-container --build")
-            self.build_image()
+                fail(3, f"image {self.image} not found; run: render-in-container --pull (or --build)")
+            self.pull_image(required=False) or self.build_image()
         elif have != want and have != "<no value>":
             if self.no_build:
-                note(f"warning: {self.image} was built from older skill sources ({have}, now {want}); rebuild with --build")
+                note(f"warning: {self.image} was built from older skill sources ({have}, now {want}); "
+                     "update with --pull or --build")
             else:
-                note("image is older than the skill's sources; rebuilding")
-                self.build_image()
+                note("image is older than the skill's sources; updating it")
+                self.pull_image(required=False) or self.build_image()
 
     def status(self) -> int:
         have = image_label(self.docker, self.image)
         want = source_sha()
         if not have:
-            print(f"image {self.image}: missing (build: render-in-container --build)")
+            print(f"image {self.image}: missing (get it: render-in-container --pull, or --build)")
             return 2
         size = image_size(self.docker, self.image)
         if have == want:
             print(f"image {self.image}: current ({size}, sources {want})")
             return 0
-        print(f"image {self.image}: stale (built from {have}, sources now {want}; the next render rebuilds it)")
+        print(f"image {self.image}: stale (built from {have}, sources now {want}; the next render pulls or "
+              "rebuilds it)")
         return 1
 
     # -- GPU ---------------------------------------------------------------------------------
@@ -385,7 +448,7 @@ def parse_args(argv: list[str]) -> dict:
             o["nvidia"] = True
         elif a == "--no-build":
             o["no_build"] = True
-        elif a in ("--build", "--status", "--geometry", "--doctor", "--check"):
+        elif a in ("--build", "--pull", "--status", "--geometry", "--doctor", "--check", "--source-sha"):
             o["action"] = a[2:]
         elif a == "--tts":
             o["tts"] = True
@@ -451,7 +514,7 @@ def cmd_check(r: Runner, tts: bool) -> int:
     if IS_MAC or IS_WINDOWS:
         print("note GPU: Docker Desktop gives Linux containers no GPU for this skill; renders use the CPU")
     print("RESULT: " + ("READY" if not bad else "NOT READY") + (" (image missing or stale: the first render "
-          "builds it, or run --build)" if st else ""))
+          "pulls or builds it, or run --pull / --build)" if st else ""))
     return 0 if not bad else 1
 
 
@@ -460,6 +523,9 @@ def main(argv: list[str]) -> int:
     if o["action"] == "help":
         print(__doc__)
         return 0
+    if o["action"] == "source-sha":     # no Docker needed (the image workflow uses this)
+        print(source_sha())
+        return 0
     r = Runner()
     r.no_build = o["no_build"]
     if o["action"] == "check":
@@ -467,6 +533,12 @@ def main(argv: list[str]) -> int:
     r.preflight()
     if o["action"] == "build":
         r.build_image()
+        return 0
+    if o["action"] == "pull":
+        if image_label(r.docker, r.image) == source_sha():
+            note(f"{r.image} is already current (sources {source_sha()})")
+        else:
+            r.pull_image(required=True)
         return 0
     if o["action"] == "status":
         return r.status()

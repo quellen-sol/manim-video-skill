@@ -1,7 +1,8 @@
 # The render container and the job contract
 
 The default way to render is the `manim-video:local` image, run by
-`scripts/render-in-container.sh`. Everything the render needs is inside the image: Manim Community
+`scripts/render-in-container.sh`. The image is pulled from GHCR (the build the repository
+publishes for exactly these sources) or built locally. Everything the render needs is inside the image: Manim Community
 0.22.1, manim-voiceover 0.4.0 with `KokoroService`, LaTeX, ffmpeg, Cairo/Pango with Noto fonts, and
 the skill's helpers. The host needs only Docker with the compose plugin. You hand the container a
 job directory, and it writes a video, stills and a check report into that directory's `out/`.
@@ -88,7 +89,8 @@ R="$SKILL_DIR/scripts/render-in-container.sh"
 "$R" jobs/unit-circle --frames --at 12.5,31 # extra full-size stills from the last render
 "$R" jobs/unit-circle --geometry            # re-measure GeometryGuard rules in seconds (no frames)
 "$R" --doctor [--gpu]                       # versions, fonts, LaTeX, EGL and VA-API in the image
-"$R" --build                                # build or rebuild the image (about 6 min the first time)
+"$R" --pull                                 # fetch the published image for these sources
+"$R" --build                                # build or rebuild it locally (about 6 min the first time)
 ```
 
 On Windows (PowerShell) run `scripts\render-in-container.ps1` with the same arguments; on any OS
@@ -118,9 +120,12 @@ Manim's cache in `out/media/` makes re-renders redo only the animations it sees 
 fix does not show up, set `"cache": false` for one render. `--still K` renders the current
 `scene.py`, so after editing the scene, take K from a fresh render's `index.txt`.
 
-If the image is missing, the wrapper builds it. If the skill's scripts or Docker files changed
-since the image was built (it compares a hash stored in an image label), it rebuilds; with the
-build cache that takes seconds. `--no-build` skips both and warns instead.
+If the image is missing, or the skill's scripts or Docker files changed since it was made (the
+wrapper compares a hash stored in an image label), the wrapper first pulls the published image
+for the current sources (`$MANIM_PULL_FROM:<hash>`, default `ghcr.io/quellen-sol/manim-video`)
+and builds locally if there is none; a rebuild with the build cache takes seconds.
+`--no-build` skips both and warns instead. If a build fails on certificate errors (a proxy that
+re-signs HTTPS), use `--pull`.
 
 ## Narration in the container
 

@@ -16,7 +16,7 @@ name: manim-video
 services:
   manim:
     image: ${MANIM_IMAGE:-manim-video:local}
-    pull_policy: never              # local image only; build it, never pull a same-named one
+    pull_policy: never              # compose never pulls; the wrapper pulls by source hash or builds
     build:
       context: ..                   # the skill directory
       dockerfile: docker/Dockerfile

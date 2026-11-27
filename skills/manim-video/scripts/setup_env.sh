@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Set up the manim-video toolchain. No root, no sudo, no system packages.
 #
-# Usage: setup_env.sh [--host] [--no-image]
+# Usage: setup_env.sh [--host] [--no-image] [--build]
 #
-#  default   build the render image manim-video:local from ../docker/ (the container route, the
-#            default way to render). Needs Docker with the compose plugin and membership of the
-#            docker group. Takes about 6 minutes the first time; later runs reuse the build cache.
+#  default   get the render image manim-video:local (the container route, the default way to
+#            render): pull the published image built from these exact sources
+#            (render-in-container.sh --pull; MANIM_PULL_FROM), or build it from ../docker/ if none
+#            is published. Needs Docker with the compose plugin and membership of the docker
+#            group. A local build takes about 6 minutes the first time; later builds reuse the cache.
+#  --build   build locally even if a published image exists
 #  --host    also set up the host route (a fallback for local testing and comparisons):
 #            a venv at $MANIM_HOST_VENV with the same pinned Python packages as the image
 #            (docker/requirements.lock), and, only if the system ffmpeg is missing or broken, a
@@ -20,12 +23,13 @@ set -euo pipefail
 # shellcheck source=_env.sh
 . "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
 
-DO_HOST=0; DO_IMAGE=1
+DO_HOST=0; DO_IMAGE=1; DO_BUILD=0
 for a in "$@"; do
   case "$a" in
     --host) DO_HOST=1 ;;
     --no-image) DO_IMAGE=0 ;;
-    -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --build) DO_BUILD=1 ;;
+    -h|--help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "setup_env.sh: unknown option $a" >&2; exit 2 ;;
   esac
 done
@@ -36,7 +40,10 @@ if [ $DO_IMAGE -eq 1 ]; then
     echo "  Ask an administrator, or use the host route: setup_env.sh --host --no-image" >&2
     exit 1
   fi
-  "$SCRIPTS_DIR/render-in-container.sh" --build
+  if [ $DO_BUILD -eq 1 ] || ! "$SCRIPTS_DIR/render-in-container.sh" --pull; then
+    [ $DO_BUILD -eq 1 ] || echo "image: no published image to pull; building locally" >&2
+    "$SCRIPTS_DIR/render-in-container.sh" --build
+  fi
 fi
 
 if [ $DO_HOST -eq 1 ]; then

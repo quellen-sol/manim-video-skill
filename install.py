@@ -132,10 +132,10 @@ Hermes may edit skills in external dirs in place; consider skills.write_approval
     if IS_WINDOWS:
         say(f"""Next, the render container (needs Docker Desktop running, WSL2 backend):
   & "{SRC / 'scripts' / 'render-in-container.ps1'}" --check
-  & "{SRC / 'scripts' / 'render-in-container.ps1'}" --build     # builds manim-video:local (about 6 min)""")
+  & "{SRC / 'scripts' / 'render-in-container.ps1'}" --pull      # published image (or --build: about 6 min)""")
     else:
         say(f"""Next, the render container (the default render route; needs Docker with the compose plugin):
-  {SRC}/scripts/setup_env.sh          # builds the image manim-video:local (about 6 min, no sudo)
+  {SRC}/scripts/setup_env.sh          # pulls the published image, or builds it (about 6 min, no sudo)
   {SRC}/scripts/check_env.sh          # read-only check; add --gpu, --tts
 Host route (fallback without Docker, Linux/macOS; needs Cairo/Pango headers and LaTeX):
   {SRC}/scripts/setup_env.sh --host --no-image""")

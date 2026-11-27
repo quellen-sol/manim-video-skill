@@ -20,7 +20,8 @@ fi
 export PATH MANIM_VIDEO_HOME
 
 MANIM_VERSION="${MANIM_VERSION:-0.22.1}"
-# Container route (the default): image tag built from ../docker/ by render-in-container.sh --build.
+# Container route (the default): image tag, pulled (render-in-container.sh --pull) or built from
+# ../docker/ (--build).
 MANIM_IMAGE="${MANIM_IMAGE:-manim-video:local}"
 # Host route (the fallback): a venv made by `setup_env.sh --host`, or manim on PATH.
 MANIM_HOST_VENV="${MANIM_HOST_VENV:-$MANIM_VIDEO_HOME/venv}"

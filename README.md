@@ -19,6 +19,7 @@ host-native install is kept only as a fallback for local testing.
 ```
 manim-video-skill/
 ├── README.md, LICENSE (MIT), AGENTS.md, .gitattributes (LF for everything that runs in Linux)
+├── .github/workflows/image.yml     builds the image for amd64 and arm64, publishes it to GHCR
 ├── install.py                      links the one canonical skill into agent skill dirs (Linux,
 │                                   macOS, Windows; Python 3.9+, stdlib only)
 ├── install.sh, install.ps1         thin shims that run install.py (bash/zsh; PowerShell)
@@ -51,7 +52,8 @@ manim-video-skill/
 ## Install
 
 The skill is one folder (`skills/manim-video`). Agents find it through a link (or a copy) in their
-skills directory; all rendering happens in a Docker image that the wrapper builds on first use.
+skills directory; all rendering happens in a Docker image that the wrapper pulls from GHCR (or
+builds) on first use.
 Status per platform: **Linux is verified** (Ubuntu 24.04, amd64, on the nucbox). **macOS and
 Windows are UNTESTED**: the steps below follow the tools' documentation, and everything that
 could be checked from Linux was (the Windows path conversion and the installer's junction and
@@ -78,7 +80,7 @@ cd ~/dev/manim-video-skill
 ./install.sh --dry-run                                     # what it would link
 ./install.sh                                               # link; --uninstall to undo
 skills/manim-video/scripts/render-in-container.sh --check  # Docker, compose, image (NOT READY until built)
-skills/manim-video/scripts/setup_env.sh                    # build manim-video:local (~6 min first time)
+skills/manim-video/scripts/setup_env.sh                    # pull the published image, or build it (~6 min)
 skills/manim-video/scripts/check_env.sh --tts              # fuller read-only check (add --gpu, --host)
 skills/manim-video/scripts/render-in-container.sh tests/jobs/smoke   # first smoke render (~15 s)
 ```
@@ -93,11 +95,11 @@ exits 0. `install.sh` creates two symlinks to `skills/manim-video` and changes n
    4 CPUs and 4 GB of memory. Keep the clone and your job directories under `/Users` (shared with
    containers by default).
 2. Install Git and Python: `xcode-select --install`, or `brew install git python`.
-3. In Terminal (zsh), run the Linux commands above, but build with
-   `skills/manim-video/scripts/render-in-container.sh --build` instead of `setup_env.sh`
-   (`check_env.sh` and `setup_env.sh` were written for Linux; the wrapper's `--check` and
-   `--build` are the cross-platform equivalents). On Apple Silicon the image builds natively for
-   `linux/arm64`.
+3. In Terminal (zsh), run the Linux commands above, but get the image with
+   `skills/manim-video/scripts/render-in-container.sh --pull` (or `--build`) instead of
+   `setup_env.sh` (`check_env.sh` and `setup_env.sh` were written for Linux; the wrapper's
+   `--check`, `--pull` and `--build` are the cross-platform equivalents). On Apple Silicon the
+   published image and a local build are both native `linux/arm64`.
 
 ### Windows 10/11, native PowerShell (UNTESTED)
 
@@ -113,7 +115,7 @@ exits 0. `install.sh` creates two symlinks to `skills/manim-video` and changes n
    .\install.ps1 --dry-run
    .\install.ps1
    .\skills\manim-video\scripts\render-in-container.ps1 --check
-   .\skills\manim-video\scripts\render-in-container.ps1 --build
+   .\skills\manim-video\scripts\render-in-container.ps1 --pull     # or --build (about 6 min)
    .\skills\manim-video\scripts\render-in-container.ps1 tests\jobs\smoke
    ```
 
@@ -187,6 +189,31 @@ provides that name, and on Linux the compose file maps it to the host gateway. `
 - If the container cannot reach the host (a host firewall on Linux), set
   `MANIM_TTS_NETWORK=host` for narrated renders.
 
+### The published image (GHCR)
+
+`.github/workflows/image.yml` builds the image whenever a push to `main` changes what goes into
+it, for `linux/amd64` and `linux/arm64` on native GitHub runners. It publishes the image as
+`ghcr.io/quellen-sol/manim-video:<source hash>` (and `:latest`), then pulls it back through the
+wrapper and renders the smoke job on both architectures. The source hash is
+`render-in-container --source-sha`: the hash of the Dockerfile, the lock, `manim_job.py` and the
+helper scripts baked into the image, the same hash a local build writes into the image label. A
+hash that is already published is not rebuilt (run the workflow by hand with "force" to rebuild).
+Nothing else pushes the image.
+
+`render-in-container --pull` fetches the tag for your checkout's hash, checks the label, and tags
+it `manim-video:local`, so the result is the image a local build would give. A render that finds
+the image missing or stale tries the same pull first and builds locally only if that fails.
+`setup_env.sh` pulls too (`--build` forces a local build).
+
+Pull when the build cannot run, for example behind a proxy that re-signs HTTPS. The build fetches
+Ubuntu packages and Python wheels over TLS inside a build container that does not trust the
+proxy's certificate. A pull goes through the Docker daemon, which uses the host's certificate
+store, and that store usually trusts the proxy already. Local changes to the image sources have
+no published image: build those, or push them to `main` and pull once the workflow finishes.
+
+`MANIM_PULL_FROM` names the registry repository (default `ghcr.io/quellen-sol/manim-video`; a fork
+sets its own). `MANIM_PULL_FROM=none` turns pulling off, so a missing or stale image is always built.
+
 ### Troubleshooting
 
 | Symptom | Fix |
@@ -197,6 +224,9 @@ provides that name, and on Linux the compose file maps it to the host gateway. `
 | `/usr/bin/env: 'bash\r'`, `$'\r': command not found`, or the image build fails on a `RUN` line | the checkout has CRLF line endings (a copy made without git, or a clone made before `.gitattributes` existed). Clone again with Git; `.gitattributes` forces LF |
 | `install.ps1` made a junction or a copy, not a symlink | expected without Developer Mode (Settings, For developers) or an elevated shell. Junctions behave like links; a copy needs `.\install.ps1` again after each `git pull` |
 | PowerShell: `running scripts is disabled on this system` | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, or `powershell -ExecutionPolicy Bypass -File ...` |
+| the image build fails with `certificate`, `x509` or `SSL` errors | a proxy re-signs HTTPS (common on work machines), and the build container does not trust its CA. Use the published image instead: `render-in-container --pull` (see "The published image") |
+| `--pull`: `not found` or `manifest unknown` | no image is published for your checkout's sources: local edits to the image sources, or the image workflow has not finished yet. Wait for it, or build with `--build` |
+| `--pull`: `denied` or `unauthorized` | GHCR says this both when nothing is published yet and when the package is private. Check that the image workflow has run; for a private package, make it public or `docker login ghcr.io` with a token that has `read:packages` |
 | Apple Silicon: the image build fails | the image builds natively for `linux/arm64` (checked only statically). As a slower fallback, build and run the amd64 image under emulation: set `DOCKER_DEFAULT_PLATFORM=linux/amd64` before `--build` and every render (UNTESTED) |
 | `--gpu` prints "rendering on the CPU" on macOS or Windows | expected: Docker Desktop gives Linux containers no GPU for this use (references/gpu-and-speed.md); the default Cairo renderer is CPU-only anyway |
 | narration: `cannot reach the TTS server` | is Kokoro answering on the host's port 8880 (`--check --tts`)? Linux: try `MANIM_TTS_NETWORK=host` |
@@ -204,7 +234,8 @@ provides that name, and on Linux the compose file maps it to the host gateway. `
 ### What to test on a real Mac or Windows PC
 
 1. `install.sh` (macOS) or `install.ps1` (Windows): links created; the agent lists the skill.
-2. `render-in-container --check`, then `--build`: the image builds (on Apple Silicon: natively for arm64).
+2. `render-in-container --check`, then `--pull` (and once `--build`): the image pulls and builds
+   (on Apple Silicon: natively for arm64).
 3. The smoke render: `tests/jobs/smoke` exits 0 and `out/report.md` says PASS.
 4. A silent example at preview quality (`examples/01-unit-circle`), and one final.
 5. Narration: Kokoro on the host, `--check --tts`, then `tests/jobs/narrated`.
@@ -236,7 +267,8 @@ warnings, and the measured geometry check: declared `concentric`/`symmetric`/`wi
 `centered_in` rules from `scripts/geometry_qa.py`, plus `geometry.json`), `stills/` (contact sheets, one still per animation, `index.txt`), `render.log` and
 `summary.json`. The contract and every `job.json` key: `skills/manim-video/references/container.md`.
 
-- **Image** `manim-video:local` (never pushed): Ubuntu 24.04 by digest, apt from a dated
+- **Image** `manim-video:local`, pulled from `ghcr.io/quellen-sol/manim-video:<source hash>` or
+  built locally (see "The published image" above): Ubuntu 24.04 by digest, apt from a dated
   `snapshot.ubuntu.com` snapshot, Python packages hash-pinned in `docker/requirements.lock`.
   Manim Community 0.22.1, manim-voiceover 0.4.0, Python 3.12, TeX Live 2023 (latex-base,
   latex-extra, fonts-recommended, science, tipa) + dvisvgm 3.2.1, ffmpeg 6.1.1, Cairo/Pango,

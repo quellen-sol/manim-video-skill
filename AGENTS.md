@@ -22,7 +22,10 @@ When you change the skill:
   uv records the hashes of every wheel and sdist of each pinned version, so the same lock serves
   linux/arm64 (check that the resolved set has no x86-only markers). The Dockerfile builds for
   linux/amd64 and linux/arm64; keep amd64-only packages behind its `TARGETARCH` case.
-  Never push the image anywhere; it is built locally.
+  Only `.github/workflows/image.yml` pushes the image (GHCR, tagged with the source hash from
+  `render-in-container --source-sha`; amd64 and arm64 on native runners, smoke-rendered after
+  publishing); never push it by hand. The wrapper pulls the tag that matches the checkout and
+  builds locally if there is none. Its path filters must cover every file in the source hash.
 - Defaults stay as they are unless measured better: 1080p60, Cairo, GPU off, serial
   (`workers` 1, `encoders` 1). Speed options and their measurements: `references/gpu-and-speed.md`.
 - `.gitattributes` keeps LF for everything except `.ps1`/`.cmd`/`.bat`; do not add CRLF files.

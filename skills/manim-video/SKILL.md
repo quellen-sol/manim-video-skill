@@ -40,10 +40,10 @@ Every other path in this file is relative to `SKILL_DIR`.
 ## Step 0: check the tools and ask about narration
 
 1. Run `"$SKILL_DIR/scripts/check_env.sh"`. If it prints `RESULT: NOT READY`, run
-   `"$SKILL_DIR/scripts/setup_env.sh"` (builds the render image; about 6 minutes the first
-   time, no root), then check again. If Docker itself is unusable, see "Host route" at the end.
+   `"$SKILL_DIR/scripts/setup_env.sh"` (pulls the published render image, or builds it in
+   about 6 minutes; no root), then check again. If Docker itself is unusable, see "Host route" at the end.
    If it still fails, stop and report the FAIL lines. **Windows without bash (PowerShell):**
-   use `& "$SKILL_DIR\scripts\render-in-container.ps1" --check` and `--build` instead; every
+   use `& "$SKILL_DIR\scripts\render-in-container.ps1" --check` and `--pull` (or `--build`) instead; every
    `render-in-container.sh` command in this file works the same with `render-in-container.ps1`
    (both run `scripts/render_in_container.py`, which needs Python 3.9+).
 2. **Ask the user before planning**, in one short message:
@@ -256,12 +256,12 @@ storyboard in one paragraph, iterations used, bugs found and fixed, what was che
 
 | Path | Use |
 |---|---|
-| `scripts/render-in-container.sh` | **the renderer**: job dir in, `out/` with video, report, stills; `--frames`, `--still K`, `--doctor`, `--build`, `--check` |
+| `scripts/render-in-container.sh` | **the renderer**: job dir in, `out/` with video, report, stills; `--frames`, `--still K`, `--doctor`, `--pull`, `--build`, `--check` |
 | `scripts/render-in-container.ps1`, `scripts/render_in_container.py` | the same renderer from Windows PowerShell; the cross-platform Python it all runs |
 | `scripts/parallel_render.py` | opt-in parallel sections (`"workers": N`), run for you in the container |
 | `docker/` | the image (`Dockerfile`, amd64 and arm64, pinned `requirements.lock`), `compose.yml`, the opt-in `compose.gpu.yml` (Linux `/dev/dri`) and `compose.nvidia.yml` (untested) |
 | `scripts/check_env.sh` | read-only check of the container route (`--host`: host route; `--gpu`; `--tts`; `--fonts`) |
-| `scripts/setup_env.sh` | builds the image (`--host`: the host-route venv) |
+| `scripts/setup_env.sh` | pulls or builds the image (`--host`: the host-route venv) |
 | `scripts/render.sh` | host route only: `preview`, `final` or `still` with a host-native Manim |
 | `scripts/qa_check.py` | headless checks (run for you in the container): streams, audio, empty screen, stalls, pop-ins |
 | `scripts/frames.py` | stills (run for you in the container): per animation, evenly spaced, at times, per hold or subtitle cue |

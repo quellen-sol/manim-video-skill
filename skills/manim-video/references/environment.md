@@ -9,7 +9,8 @@
 | Use it for | every render | local testing, comparing against the container, no-Docker machines |
 | Details | [container.md](container.md) | below |
 
-Set up: `scripts/setup_env.sh` (container route), `scripts/setup_env.sh --host` (host route).
+Set up: `scripts/setup_env.sh` (container route: pulls the published image or builds it),
+`scripts/setup_env.sh --host` (host route).
 Check: `scripts/check_env.sh` (add `--host`, `--gpu`, `--tts`, `--fonts`).
 
 ## Verified on the nucbox (Ubuntu 24.04, Intel N150, 4 cores, Intel iGPU, no root)
@@ -69,6 +70,7 @@ waits for TTS of every sentence (minutes on a CPU Kokoro); later renders reuse t
 | Variable | Default | Used by |
 |---|---|---|
 | `MANIM_IMAGE` | `manim-video:local` | container route: image tag |
+| `MANIM_PULL_FROM` | `ghcr.io/quellen-sol/manim-video` | container route: where published images live; `none` always builds locally |
 | `MANIM_TTS_NETWORK` | `bridge` | container route: `host` if the host-gateway route to the TTS server is blocked |
 | `KOKORO_ENV_FILE` | `~/.config/agent-stack/gateway.env` | container route: where to read `KOKORO_API_KEY` if it is not set |
 | `MANIM_VIDEO_HOME` | `~/.local/share/manim-video` | host route: static ffmpeg (`bin/`) and the venv |

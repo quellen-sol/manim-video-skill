@@ -161,6 +161,6 @@ if [ $HOST -eq 1 ] && [ $HOST_OK -eq 1 ]; then
   echo "RESULT: container route NOT READY; host route READY ($WARNS warn). Render with scripts/render.sh (fallback)."
   exit 0
 fi
-echo "RESULT: NOT READY. Fix the FAIL lines: scripts/setup_env.sh builds the image (needs Docker);"
+echo "RESULT: NOT READY. Fix the FAIL lines: scripts/setup_env.sh pulls or builds the image (needs Docker);"
 echo "        scripts/setup_env.sh --host sets up the host fallback."
 exit 1

@@ -100,10 +100,96 @@ class SourceHash(unittest.TestCase):
                              env=dict(os.environ, LC_ALL="C")).stdout.strip()
         self.assertEqual(ric.source_sha(), out)
 
+    def test_source_sha_cli(self):
+        out = subprocess.run([sys.executable, str(SKILL / "scripts" / "render_in_container.py"), "--source-sha"],
+                             capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0)
+        self.assertEqual(out.stdout.strip(), ric.source_sha())
+
     def test_wrapper_not_in_image_context(self):
         lines = (SKILL / ".dockerignore").read_text().splitlines()
         self.assertIn("scripts/render_in_container.py", lines)
         self.assertGreater(lines.index("scripts/render_in_container.py"), lines.index("!scripts/*.py"))
+
+
+class PullFirst(unittest.TestCase):
+    """A missing or stale image is pulled first (tag = source hash), then built if that fails."""
+
+    def runner(self, label, pull_ok):
+        r = ric.Runner.__new__(ric.Runner)
+        r.docker, r.image, r.no_build, r.calls = "docker", "manim-video:local", False, []
+        r.pull_image = lambda required: r.calls.append(("pull", required)) or pull_ok
+        r.build_image = lambda: r.calls.append(("build",))
+        self.label = label
+        return r
+
+    def setUp(self):
+        self.saved = ric.image_label, ric.source_sha
+        ric.image_label = lambda docker, image: self.label
+        ric.source_sha = lambda: "want"
+
+    def tearDown(self):
+        ric.image_label, ric.source_sha = self.saved
+
+    def test_order(self):
+        for label, pull_ok, calls in [
+            (None, True, [("pull", False)]),                    # missing: pulled
+            (None, False, [("pull", False), ("build",)]),       # missing, not published: built
+            ("old", True, [("pull", False)]),                   # stale: pulled
+            ("old", False, [("pull", False), ("build",)]),      # stale, not published: built
+            ("want", True, []),                                 # current: nothing
+            ("<no value>", True, []),                           # unlabelled custom image: left alone
+        ]:
+            with self.subTest(label=label, pull_ok=pull_ok):
+                r = self.runner(label, pull_ok)
+                r.ensure_image()
+                self.assertEqual(r.calls, calls)
+
+    def test_no_build_neither_pulls_nor_builds(self):
+        r = self.runner("old", True)
+        r.no_build = True
+        r.ensure_image()
+        self.assertEqual(r.calls, [])
+        r = self.runner(None, True)
+        r.no_build = True
+        with self.assertRaises(ric.Exit) as cm:
+            r.ensure_image()
+        self.assertEqual(cm.exception.code, 3)
+
+    def test_pull_from(self):
+        saved = os.environ.pop("MANIM_PULL_FROM", None)
+        try:
+            self.assertEqual(ric.pull_from(), "ghcr.io/quellen-sol/manim-video")
+            for off in ("", "none", "NONE", " off "):
+                os.environ["MANIM_PULL_FROM"] = off
+                self.assertIsNone(ric.pull_from(), off)
+            os.environ["MANIM_PULL_FROM"] = "ghcr.io/someone/manim-video"
+            self.assertEqual(ric.pull_from(), "ghcr.io/someone/manim-video")
+        finally:
+            os.environ.pop("MANIM_PULL_FROM", None)
+            if saved is not None:
+                os.environ["MANIM_PULL_FROM"] = saved
+
+    def test_actions_parse(self):
+        for a in ("--pull", "--source-sha", "--build"):
+            self.assertEqual(ric.parse_args([a])["action"], a[2:])
+
+    def test_workflow_paths_cover_the_hash(self):
+        """The image workflow must run whenever a file in the source hash changes."""
+        import fnmatch
+        wf = (ROOT / ".github" / "workflows" / "image.yml").read_text().splitlines()
+        start = wf.index("    paths:")
+        pats = []
+        for line in wf[start + 1:]:
+            if not line.startswith("      - "):
+                break
+            pats.append(line[8:].strip())
+        hashed = ["docker/Dockerfile", "docker/requirements.lock", "docker/manim_job.py"]
+        hashed += [f"scripts/{p.name}" for p in (SKILL / "scripts").glob("*.py") if p.name != "render_in_container.py"]
+        for f in hashed + [".dockerignore"]:
+            path = f"skills/manim-video/{f}"
+            ok = any(fnmatch.fnmatchcase(path, pat.replace("**", "*")) for pat in pats)
+            self.assertTrue(ok, f"{path} is not covered by the image workflow's paths: {pats}")
 
 
 class Installer(unittest.TestCase):

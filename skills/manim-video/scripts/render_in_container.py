@@ -265,7 +265,7 @@ class Runner:
             return False
         want = source_sha()
         ref = f"{repo}:{want}"
-        note(f"pulling {ref} (the published image for these sources; a few minutes the first time)")
+        note(f"pulling {ref} (the published image for these sources; about 0.7 GB to download)")
         r = run_quiet([self.docker, "pull", "-q", ref])
         if r.returncode != 0:
             err = (r.stderr.strip().splitlines() or ["no output"])[-1]

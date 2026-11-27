@@ -57,8 +57,9 @@ builds) on first use.
 Status per platform: **Linux is verified** (Ubuntu 24.04, amd64, on the nucbox). **macOS and
 Windows are UNTESTED**: the steps below follow the tools' documentation, and everything that
 could be checked from Linux was (the Windows path conversion and the installer's junction and
-copy logic are unit-tested, the PowerShell shims are syntax-checked, the arm64 image is checked
-statically). See "What to test on a real Mac or Windows PC" at the end of this section.
+copy logic are unit-tested, the PowerShell shims are syntax-checked, and the arm64 image is
+built and smoke-rendered on GitHub's arm64 Linux runners). See "What to test on a real Mac or
+Windows PC" at the end of this section.
 
 ### What you need
 
@@ -198,7 +199,8 @@ wrapper and renders the smoke job on both architectures. The source hash is
 `render-in-container --source-sha`: the hash of the Dockerfile, the lock, `manim_job.py` and the
 helper scripts baked into the image, the same hash a local build writes into the image label. A
 hash that is already published is not rebuilt (run the workflow by hand with "force" to rebuild).
-Nothing else pushes the image.
+Nothing else pushes the image. The package is public, so pulling needs no login. A pull
+downloads about 0.66 GB, against about 6 minutes for a local build.
 
 `render-in-container --pull` fetches the tag for your checkout's hash, checks the label, and tags
 it `manim-video:local`, so the result is the image a local build would give. A render that finds
@@ -227,7 +229,7 @@ sets its own). `MANIM_PULL_FROM=none` turns pulling off, so a missing or stale i
 | the image build fails with `certificate`, `x509` or `SSL` errors | a proxy re-signs HTTPS (common on work machines), and the build container does not trust its CA. Use the published image instead: `render-in-container --pull` (see "The published image") |
 | `--pull`: `not found` or `manifest unknown` | no image is published for your checkout's sources: local edits to the image sources, or the image workflow has not finished yet. Wait for it, or build with `--build` |
 | `--pull`: `denied` or `unauthorized` | GHCR says this both when nothing is published yet and when the package is private. Check that the image workflow has run; for a private package, make it public or `docker login ghcr.io` with a token that has `read:packages` |
-| Apple Silicon: the image build fails | the image builds natively for `linux/arm64` (checked only statically). As a slower fallback, build and run the amd64 image under emulation: set `DOCKER_DEFAULT_PLATFORM=linux/amd64` before `--build` and every render (UNTESTED) |
+| Apple Silicon: the image build fails | pull the published `linux/arm64` image instead (`--pull`; built and smoke-rendered on arm64 Linux runners). As a slower fallback, build and run the amd64 image under emulation: set `DOCKER_DEFAULT_PLATFORM=linux/amd64` before `--build` and every render (UNTESTED) |
 | `--gpu` prints "rendering on the CPU" on macOS or Windows | expected: Docker Desktop gives Linux containers no GPU for this use (references/gpu-and-speed.md); the default Cairo renderer is CPU-only anyway |
 | narration: `cannot reach the TTS server` | is Kokoro answering on the host's port 8880 (`--check --tts`)? Linux: try `MANIM_TTS_NETWORK=host` |
 
@@ -272,9 +274,11 @@ warnings, and the measured geometry check: declared `concentric`/`symmetric`/`wi
   `snapshot.ubuntu.com` snapshot, Python packages hash-pinned in `docker/requirements.lock`.
   Manim Community 0.22.1, manim-voiceover 0.4.0, Python 3.12, TeX Live 2023 (latex-base,
   latex-extra, fonts-recommended, science, tipa) + dvisvgm 3.2.1, ffmpeg 6.1.1, Cairo/Pango,
-  Noto fonts, Mesa EGL/GL, Intel VA-API (amd64 only). Builds for `linux/amd64` (verified) and
-  `linux/arm64` (Apple Silicon, arm64 Linux; checked statically, see `docker/Dockerfile`).
-  1.72 GB (amd64); first build 6 min 8 s on the nucbox, about 4 min after a Dockerfile change, seconds after a helper change.
+  Noto fonts, Mesa EGL/GL, Intel VA-API (amd64 only). Builds for `linux/amd64` (verified on the
+  nucbox and in CI) and `linux/arm64` (Apple Silicon, arm64 Linux; built and smoke-rendered in CI).
+  1.72 GB (amd64), 1.68 GB (arm64); a pull downloads about 0.66 GB (24 s on the nucbox). First
+  local build 6 min 8 s on the nucbox, about 4 min after a Dockerfile change, seconds after a
+  helper change; the CI build takes about 5 min per architecture.
 - **Compose** is the definition (`docker/compose.yml`, styled after the host's Jellyfin
   stack); the wrapper runs `docker compose run --rm` with a unique project per job and removes
   the container on exit, error, Ctrl-C or SIGTERM. No restart policy, ports or container names;
